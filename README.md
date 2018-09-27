@@ -1,5 +1,9 @@
 # Deep SORT
 
+
+## My changes 
+I am adding content to the MOT16 and resources directories to allow this code to be run on other datasets, starting with the custom one
+
 ## Introduction
 
 This repository contains code for *Simple Online and Realtime Tracking with a Deep Association Metric* (Deep SORT).

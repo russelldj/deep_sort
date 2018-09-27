@@ -99,10 +99,11 @@ class Visualization(object):
     def run(self, frame_callback):
         self.viewer.run(lambda: self._update_fun(frame_callback))
 
-    def _update_fun(self, frame_callback):
+    def _update_fun(self, frame_callback, display=False):
         if self.frame_idx > self.last_idx:
             return False  # Terminate
-        frame_callback(self, self.frame_idx)
+        if display:
+            frame_callback(self, self.frame_idx)
         self.frame_idx += 1
         return True
 

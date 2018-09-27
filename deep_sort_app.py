@@ -1,4 +1,3 @@
-# vim: expandtab:ts=4:sw=4
 from __future__ import division, print_function, absolute_import
 
 import argparse
@@ -54,6 +53,7 @@ def gather_sequence_info(sequence_dir, detection_file):
         groundtruth = np.loadtxt(groundtruth_file, delimiter=',')
 
     if len(image_filenames) > 0:
+        input(next(iter(image_filenames.values())))
         image = cv2.imread(next(iter(image_filenames.values())),
                            cv2.IMREAD_GRAYSCALE)
         image_size = image.shape
@@ -129,6 +129,8 @@ def create_detections(detection_mat, frame_idx, min_height=0):
 def run(sequence_dir, detection_file, output_file, min_confidence,
         nms_max_overlap, min_detection_height, max_cosine_distance,
         nn_budget, display):
+    # MOD
+    assert display==False
     """Run multi-target tracker on a particular sequence.
 
     Parameters
@@ -243,14 +245,16 @@ def parse_args():
     parser.add_argument(
         "--nn_budget", help="Maximum size of the appearance descriptors "
         "gallery. If None, no budget is enforced.", type=int, default=None)
-    parser.add_argument(
-        "--display", help="Show intermediate tracking results",
-        default=True, type=bool)
+    parser.add_argument('--display', default=False, action='store_true', help='Show intermediate tracking results')
+    #parser.add_argument(
+    #    "--display", help="Show intermediate tracking results",
+    #    default=False, action='store_true', type=bool)
     return parser.parse_args()
 
 
 if __name__ == "__main__":
     args = parse_args()
+    print(args.display)
     run(
         args.sequence_dir, args.detection_file, args.output_file,
         args.min_confidence, args.nms_max_overlap, args.min_detection_height,
