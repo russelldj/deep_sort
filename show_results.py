@@ -44,6 +44,8 @@ def run(sequence_dir, result_file, show_false_alarms=False, detection_file=None,
         print("Frame idx", frame_idx)
         image = cv2.imread(
             seq_info["image_filenames"][frame_idx], cv2.IMREAD_COLOR)
+        cv2.imshow('my image', image)
+        input('d')
 
         vis.set_image(image.copy())
 

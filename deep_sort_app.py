@@ -53,7 +53,7 @@ def gather_sequence_info(sequence_dir, detection_file):
         groundtruth = np.loadtxt(groundtruth_file, delimiter=',')
 
     if len(image_filenames) > 0:
-        input(next(iter(image_filenames.values())))
+        #input(next(iter(image_filenames.values())))
         image = cv2.imread(next(iter(image_filenames.values())),
                            cv2.IMREAD_GRAYSCALE)
         image_size = image.shape
@@ -129,8 +129,6 @@ def create_detections(detection_mat, frame_idx, min_height=0):
 def run(sequence_dir, detection_file, output_file, min_confidence,
         nms_max_overlap, min_detection_height, max_cosine_distance,
         nn_budget, display):
-    # MOD
-    assert display==False
     """Run multi-target tracker on a particular sequence.
 
     Parameters
