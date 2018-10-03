@@ -179,6 +179,7 @@ def run(sequence_dir, detection_file, output_file, min_confidence,
         detections = [detections[i] for i in indices]
 
         # Update tracker.
+        # These are the important lines which need to be changed
         tracker.predict()
         tracker.update(detections)
 

@@ -1,6 +1,5 @@
 # vim: expandtab:ts=4:sw=4
 
-
 class TrackState:
     """
     Enumeration type for the single target track state. Newly created tracks are
@@ -8,12 +7,14 @@ class TrackState:
     the track state is changed to `confirmed`. Tracks that are no longer alive
     are classified as `deleted` to mark them for removal from the set of active
     tracks.
+    `occluded` might be used sometime if I want to mark tracks behind other ones 
 
     """
 
     Tentative = 1
     Confirmed = 2
     Deleted = 3
+    Occluded = 4
 
 
 class Track:
@@ -60,6 +61,9 @@ class Track:
     features : List[ndarray]
         A cache of features. On each measurement update, the associated feature
         vector is added to this list.
+    occluded_stack : Queue[int]
+        A FILO stack which holds the list of occluded object instances.
+        These represent the objects which are thought to be behind the current object
 
     """
 
@@ -76,6 +80,8 @@ class Track:
         self.features = []
         if feature is not None:
             self.features.append(feature)
+
+        self.occluded_stack = []
 
         self._n_init = n_init
         self._max_age = max_age
@@ -149,8 +155,11 @@ class Track:
         """
         if self.state == TrackState.Tentative:
             self.state = TrackState.Deleted
+            return True # a track was deleted
         elif self.time_since_update > self._max_age:
-            self.state = TrackState.Deleted
+            self.state = TrackState.Deleted 
+            return True 
+        return False # this track was good
 
     def is_tentative(self):
         """Returns True if this track is tentative (unconfirmed).
@@ -164,3 +173,22 @@ class Track:
     def is_deleted(self):
         """Returns True if this track is dead and should be deleted."""
         return self.state == TrackState.Deleted
+
+    def add_occluded(self, occluded_id):
+        self.occluded_stack.append(occluded_id)
+        print('occluded object {} was added to track {}'.format(occluded_id, self.track_id))
+
+    def remove_occluded(self):
+        # BUG this should never be empty
+        print(len(self.occluded_stack))
+        if self.occluded_stack != []:
+            removed_id = self.occluded_stack.pop()
+        else:
+            print('there was an error where the stack was empty')
+            removed_id = -1
+        print('occluded object {} was removed from track {}'.format(removed_id, self.track_id))
+        print('about to return remove occluded')
+        return removed_id
+
+    def has_occluded(self):
+        return self.occluded_stack != []

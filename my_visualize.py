@@ -22,6 +22,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--tracks_dir', default=TRACKS_DIR, type=str, help='where are the tracks that need to be visualized.' )
 parser.add_argument('--image_dir', default=DATA_DIR, type=str, help='where are the videos that need to be visualized.') 
 parser.add_argument('--output_dir', default=OUTPUT_DIR, type=str, help='where to dump the data, will be created if missing.' )
+parser.add_argument('--MOT_style_images', action='store_true', default=False, help='All the images are in the form <VIDEO_ID>/img1/*' )
 args = parser.parse_args()
 
 class Visualizer():
@@ -53,7 +54,10 @@ for vid_ind, track_file in enumerate(track_files):
     tracks = pd.read_csv(track_file, header = None, names = ["frame", "ID", "x", "y", "w", "h", "conf", "big_x", "big_y", "big_z"])
     tracks.sort_values(by=['frame'])
     #print(tracks)
-    images = sorted(glob.glob('{}/img1/*'.format(data_folders[vid_ind])))
+    if args.MOT_style_images:
+        images = sorted(glob.glob('{}/img1/*'.format(data_folders[vid_ind])))
+    else:
+        images = sorted(glob.glob('{}/*'.format(data_folders[vid_ind])))
     # make a folder to write the visualizations
     os.makedirs('{}/{}'.format(args.output_dir, os.path.basename(track_file).split('.')[0]), exist_ok=True)
     for img_ind, img_name in enumerate(images):

@@ -36,8 +36,15 @@ class Tracker:
         The list of active tracks at the current time step.
 
     """
+    # TODO
+    # determine where tracks die
+    # And what the underlying data structure of the track object is
+    # first need to add the que 
+    ## I'm not sure that it is the correct approach to use a que, but it seems as likely to work as the other ones
+    # Then do the death association
+    # then the birth
 
-    def __init__(self, metric, max_iou_distance=0.7, max_age=30, n_init=3):
+    def __init__(self, metric, max_iou_distance=0.7, max_age=30, n_init=3): #KEY these are really important parameters 
         self.metric = metric
         self.max_iou_distance = max_iou_distance
         self.max_age = max_age
@@ -47,7 +54,7 @@ class Tracker:
         self.tracks = []
         self._next_id = 1
 
-    def predict(self):
+    def predict(self): # this doesn't need to be changed at all
         """Propagate track state distributions one time step forward.
 
         This function should be called once every time step, before `update`.
@@ -55,7 +62,7 @@ class Tracker:
         for track in self.tracks:
             track.predict(self.kf)
 
-    def update(self, detections):
+    def update(self, detections): # this is the root of what needs to be changed
         """Perform measurement update and track management.
 
         Parameters
@@ -65,18 +72,47 @@ class Tracker:
 
         """
         # Run matching cascade.
+        # here I want to know what the type of the unmatched track variable is 
         matches, unmatched_tracks, unmatched_detections = \
             self._match(detections)
+        #print(matches, unmatched_tracks, unmatched_detections)
+
+        #print('matches, unmatched_tracks, unmatched_detections')
 
         # Update track set.
         for track_idx, detection_idx in matches:
             self.tracks[track_idx].update(
                 self.kf, detections[detection_idx])
-        for track_idx in unmatched_tracks:
+        for track_idx in unmatched_tracks: # these places are where the births and deaths start, but they aren't finalized until later. I need to find that place
             self.tracks[track_idx].mark_missed()
+
+
+        # get the deleted tracks
+        deleted_tracks = [t for t in self.tracks if t.is_deleted()]
+        # the filter them out from the list
+        self.tracks = [t for t in self.tracks if not t.is_deleted()]
+        # and now do matching
+        if len(deleted_tracks) > 0:
+            for track in self.tracks:
+                print( track.track_id, track.state, track.occluded_stack)
+            print('death')
+
+        for deleted_track in deleted_tracks:
+            # we only want to match with a good track so require_strong is true
+            best_occluder = self.get_max_overlap(deleted_track.to_tlbr(), require_strong=True)
+            num_adds = 0
+            for track in self.tracks:
+                if track.track_id == best_occluder:# there is no other way to index them with the simple list
+                    track.add_occluded(deleted_track.track_id)
+                    assert num_adds == 0 # it shouldn't add the same thing twice
+                    num_adds += 1
+
+            print('the best occluder candidate for {} is {}'.format(deleted_track.track_id, best_occluder))
+
+        # it seems tracks should be initialized after killing the other ones
         for detection_idx in unmatched_detections:
             self._initiate_track(detections[detection_idx])
-        self.tracks = [t for t in self.tracks if not t.is_deleted()]
+
 
         # Update distance metric.
         active_targets = [t.track_id for t in self.tracks if t.is_confirmed()]
@@ -131,8 +167,66 @@ class Tracker:
         return matches, unmatched_tracks, unmatched_detections
 
     def _initiate_track(self, detection):
+        # this is where to search for nearby tracks which are occluding something
+        nearest_occluder = self.get_max_overlap(detection.to_tlbr(), require_occluded=True)
+        for track in self.tracks:
+            print(track.track_id, track.state, track.occluded_stack)
+        print('birth')
+        occluded_id = -1
+        for track in self.tracks:
+            if track.track_id == nearest_occluder:
+                print('about to remove')
+                occluded_id = track.remove_occluded()
+                #input('removed')
+
+        #if nearest_occluder != -1:
+        #    input('the index of self.tracks[{} -1] is {}'.format(nearest_occluder, self.tracks[nearest_occluder - 1].track_id)) # the indices were 1 indexed
+        print('The nearest occluder to {} is {}'.format(detection.to_tlbr(), nearest_occluder))
+
+        # this should be tracker function which takes the self.tracks list and the new birthed one
         mean, covariance = self.kf.initiate(detection.to_xyah())
-        self.tracks.append(Track(
-            mean, covariance, self._next_id, self.n_init, self.max_age,
-            detection.feature))
-        self._next_id += 1
+        if occluded_id != -1:
+            self.tracks.append(Track(
+                mean, covariance, occluded_id, self.n_init, self.max_age,
+                detection.feature))
+        else: 
+            self.tracks.append(Track(
+                mean, covariance, self._next_id, self.n_init, self.max_age,
+                detection.feature))
+            self._next_id += 1
+
+    def get_max_overlap(self, occluded_box, require_strong=False, require_occluded=False, distance_threshold=1):
+        """ this could be used for other stuff, like births
+        input:
+        occluded_box the bounding box which either died or was detected in the tlbr format
+        require_strong: only match with confirmed and recently detected boxes
+        require_false: only used for births; match with the nearest object which is occluding another one
+        
+        """
+        #TODO make a better method for differentiating between two tracks which both fully overlap
+        def compute_overlap(target_box, background_box):
+            """This function computes how much of the target box is covered by the background one. Inherently oriented. Input should be in the form tlbr"""
+            x_overlap = max(0, min(target_box[3], background_box[3]) - max(target_box[1], background_box[1]))
+            y_overlap = max(0, min(target_box[2], background_box[2]) - max(target_box[0], background_box[0]))
+            overlap_area = x_overlap * y_overlap
+            target_area = (target_box[2] - target_box[0]) * (target_box[3] - target_box[1])
+            return overlap_area / float(target_area)
+        highest_overlap = 0.0
+        best_track = -1
+        # Important
+        [track for track in self.tracks if not track.is_tentative()]
+        for track in [track for track in self.tracks if not track.is_tentative()]:
+            if not track.is_deleted():# TODO and (track.track_id == ):
+                current_overlap = compute_overlap(occluded_box, track.to_tlbr())
+                # just don't think too much about this line and hope that it
+                # real talk, the two cases are that we required there to be an occluded object and there wasn't one, this is for birth
+                # alternatively, we wanted a track we were confident about and there wasn't one
+                if (require_occluded and not track.has_occluded()) or (require_strong and (not track.is_confirmed() or track.time_since_update > 1)):
+                    continue # jump to the next itteration of the loop and skip the update
+                if current_overlap > highest_overlap:
+                    best_track = track.track_id
+                    highest_overlap = current_overlap
+        return best_track
+                
+
+
