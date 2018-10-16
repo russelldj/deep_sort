@@ -5,12 +5,14 @@ import os
 
 import cv2
 import numpy as np
+import os
 
 from application_util import preprocessing
 from application_util import visualization
 from deep_sort import nn_matching
 from deep_sort.detection import Detection
 from deep_sort.tracker import Tracker
+from deep_sort.my_tracker import Tracker as MyTracker # make sure to avoid the namespace collision here
 
 
 def gather_sequence_info(sequence_dir, detection_file):
@@ -47,7 +49,11 @@ def gather_sequence_info(sequence_dir, detection_file):
 
     detections = None
     if detection_file is not None:
-        detections = np.load(detection_file)
+        #MOD
+        if os.path.isfile(detection_file):
+            detections = np.load(detection_file)
+        else:
+            detections = None
     groundtruth = None
     if os.path.exists(groundtruth_file):
         groundtruth = np.loadtxt(groundtruth_file, delimiter=',')
@@ -77,7 +83,7 @@ def gather_sequence_info(sequence_dir, detection_file):
         update_ms = 1000 / int(info_dict["frameRate"])
     else:
         update_ms = None
-
+        
     feature_dim = detections.shape[1] - 10 if detections is not None else 0
     seq_info = {
         "sequence_name": os.path.basename(sequence_dir),
@@ -128,7 +134,7 @@ def create_detections(detection_mat, frame_idx, min_height=0):
 
 def run(sequence_dir, detection_file, output_file, min_confidence,
         nms_max_overlap, min_detection_height, max_cosine_distance,
-        nn_budget, display):
+        nn_budget, display, stock=False):
     """Run multi-target tracker on a particular sequence.
 
     Parameters
@@ -160,7 +166,14 @@ def run(sequence_dir, detection_file, output_file, min_confidence,
     seq_info = gather_sequence_info(sequence_dir, detection_file)
     metric = nn_matching.NearestNeighborDistanceMetric(
         "cosine", max_cosine_distance, nn_budget)
-    tracker = Tracker(metric)
+    if stock:
+        print('initializing a stock tracker')
+        tracker = Tracker(metric)
+    else:
+        print('initializing a modified tracker')
+        tracker = MyTracker(metric)
+
+
     results = []
 
     def frame_callback(vis, frame_idx):

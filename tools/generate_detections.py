@@ -115,7 +115,7 @@ def create_box_encoder(model_filename, input_name="images",
     return encoder
 
 
-def generate_detections(encoder, mot_dir, output_dir, detection_dir=None):
+def generate_detections(encoder, mot_dir, output_dir, detection_dir=None, is_npy_detection=False):
     """Generate detections with features.
 
     Parameters
@@ -154,15 +154,20 @@ def generate_detections(encoder, mot_dir, output_dir, detection_dir=None):
             int(os.path.splitext(f)[0]): os.path.join(image_dir, f)
             for f in os.listdir(image_dir)}
 
-        detection_file = os.path.join(
-            detection_dir, sequence, "det/det.txt")
-        detections_in = np.loadtxt(detection_file, delimiter=',')
-        detections_out = []
+        if is_npy_detection:
+            detection_file = os.path.join(detection_dir, "{}.npy".format(sequence))
+            detections_in = np.load(detection_file)
+            detections_out = []
+        else:
+            detection_file = os.path.join(
+                detection_dir, sequence, "det/det.txt")
+            detections_in = np.loadtxt(detection_file, delimiter=',')
+            detections_out = []
 
         frame_indices = detections_in[:, 0].astype(np.int)
         min_frame_idx = frame_indices.astype(np.int).min()
         max_frame_idx = frame_indices.astype(np.int).max()
-        for frame_idx in range(min_frame_idx, max_frame_idx + 1):
+        for frame_idx in range(min_frame_idx, max_frame_idx):# max_frame_idx + 1):
             print("Frame %05d/%05d" % (frame_idx, max_frame_idx))
             mask = frame_indices == frame_idx
             rows = detections_in[mask]
@@ -177,6 +182,8 @@ def generate_detections(encoder, mot_dir, output_dir, detection_dir=None):
                                in zip(rows, features)]
 
         output_filename = os.path.join(output_dir, "%s.npy" % sequence)
+        #MOD only saving 100 frames
+        #print('only saving from frame {} to {}'.format(start_frame, stop_frame))
         np.save(
             output_filename, np.asarray(detections_out), allow_pickle=False)
 
@@ -199,6 +206,8 @@ def parse_args():
     parser.add_argument(
         "--output_dir", help="Output directory. Will be created if it does not"
         " exist.", default="detections")
+    parser.add_argument(
+        "--is-npy-detection", help="is the MOT detection folder in the form folder/<name>.npy as opposed to folder/<name>/det/det.txt", action="store_true", default='false')
     return parser.parse_args()
 
 
@@ -206,7 +215,7 @@ def main():
     args = parse_args()
     encoder = create_box_encoder(args.model, batch_size=32)
     generate_detections(encoder, args.mot_dir, args.output_dir,
-                        args.detection_dir)
+                        args.detection_dir, args.is_npy_detection)
 
 
 if __name__ == "__main__":

@@ -1,4 +1,6 @@
 # Deep SORT
+## How to do common things
+If you want to generate descriptors, use the tools/generate_descriptors.py script and point it at the network. 
 
 
 ## My changes 

@@ -174,6 +174,11 @@ class Track:
         """Returns True if this track is dead and should be deleted."""
         return self.state == TrackState.Deleted
 
+    def is_strong(self):
+        """Return if this track would be visualized"""
+        # this line is messy as I copied it from deep_sort_app and modified it so it wasn't is_weak
+        return not ((not self.is_confirmed()) or (self.time_since_update > 1))
+
     def add_occluded(self, occluded_id):
         self.occluded_stack.append(occluded_id)
         print('occluded object {} was added to track {}'.format(occluded_id, self.track_id))

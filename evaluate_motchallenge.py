@@ -34,6 +34,9 @@ def parse_args():
     parser.add_argument(
         "--nn_budget", help="Maximum size of the appearance descriptors "
         "gallery. If None, no budget is enforced.", type=int, default=100)
+    parser.add_argument(
+        "--stock", help="Remove all of the changes I made by using the stock tracker "
+        , default=False, action='store_true')
     return parser.parse_args()
 
 
@@ -50,4 +53,4 @@ if __name__ == "__main__":
         deep_sort_app.run(
             sequence_dir, detection_file, output_file, args.min_confidence,
             args.nms_max_overlap, args.min_detection_height,
-            args.max_cosine_distance, args.nn_budget, display=False)
+            args.max_cosine_distance, args.nn_budget, display=False, stock=args.stock)
