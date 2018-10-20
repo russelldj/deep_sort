@@ -1,0 +1,3 @@
+[submodule "lib/cosine_metric_learning"]
+	path = lib/cosine_metric_learning
+	url = git@github.com:russelldj/cosine_metric_learning.git
