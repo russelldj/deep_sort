@@ -15,7 +15,7 @@ from deep_sort.tracker import Tracker
 from deep_sort.my_tracker import Tracker as MyTracker # make sure to avoid the namespace collision here
 
 
-def gather_sequence_info(sequence_dir, detection_file):
+def gather_sequence_info(sequence_dir, detection_file, track_class=None):
     """Gather sequence information, such as image filenames, detections,
     groundtruth (if available).
 
@@ -52,6 +52,13 @@ def gather_sequence_info(sequence_dir, detection_file):
         #MOD
         if os.path.isfile(detection_file):
             detections = np.load(detection_file)
+            #MOD
+            if track_class is not None:
+                # only retain the tracks with thei
+                inds = detections[:,1] == track_class
+                detections = detections[inds, :] # get only the detections which have the target class, which is the second column
+
+
         else:
             detections = None
     groundtruth = None
@@ -134,7 +141,7 @@ def create_detections(detection_mat, frame_idx, min_height=0):
 
 def run(sequence_dir, detection_file, output_file, min_confidence,
         nms_max_overlap, min_detection_height, max_cosine_distance,
-        nn_budget, display, stock=False):
+        nn_budget, display, stock=False, track_class=None, **kwargs):
     """Run multi-target tracker on a particular sequence.
 
     Parameters
@@ -163,7 +170,10 @@ def run(sequence_dir, detection_file, output_file, min_confidence,
         If True, show visualization of intermediate tracking results.
 
     """
-    seq_info = gather_sequence_info(sequence_dir, detection_file)
+    if track_class is not None:
+        seq_info = gather_sequence_info(sequence_dir, detection_file, track_class)
+    else:
+        seq_info = gather_sequence_info(sequence_dir, detection_file)
     metric = nn_matching.NearestNeighborDistanceMetric(
         "cosine", max_cosine_distance, nn_budget)
     if stock:
@@ -171,8 +181,10 @@ def run(sequence_dir, detection_file, output_file, min_confidence,
         tracker = Tracker(metric)
     else:
         print('initializing a modified tracker')
-        tracker = MyTracker(metric)
-
+        # the tracker now has the class as an optional argument
+        #MOD changed the max age from 30 to 90
+        #TODO'
+        tracker = MyTracker(metric, max_age=kwargs['max_age'], max_iou_distance=1.0 - kwargs['min_iou_overlap']) # the IOU is inverted as 1 - IOU in the cost matrix
 
     results = []
 
@@ -206,7 +218,8 @@ def run(sequence_dir, detection_file, output_file, min_confidence,
 
         # Store results.
         for track in tracker.tracks:
-            if not track.is_confirmed() or track.time_since_update > 1:
+            #MOD write all the tracks, even if not detected recently
+            if not track.is_confirmed():# or track.time_since_update > 1:
                 continue
             bbox = track.to_tlwh()
             results.append([

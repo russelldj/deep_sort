@@ -33,12 +33,19 @@ def parse_args():
         "metric (object appearance).", type=float, default=0.2)
     parser.add_argument(
         "--nn_budget", help="Maximum size of the appearance descriptors "
-        "gallery. If None, no budget is enforced.", type=int, default=100)
+        "gallery. If None, no budget is enforced.", type=int, default=None)
     parser.add_argument(
         "--stock", help="Remove all of the changes I made by using the stock tracker "
         , default=False, action='store_true')
+    parser.add_argument(
+        "--track_class", help="Only produce tracks for this one class. The expected format is the integer clss label"
+        , default=None, type=int)
+    parser.add_argument(
+        "--min_iou_overlap", help="The minimum IOU required to have a feasible assignment"
+        , default=.3, type=float)
+    parser.add_argument(
+        "--max_age", help="Maximum number of frames a track will be propogated without a detection ", type=int, default=30)
     return parser.parse_args()
-
 
 if __name__ == "__main__":
     args = parse_args()
@@ -53,4 +60,4 @@ if __name__ == "__main__":
         deep_sort_app.run(
             sequence_dir, detection_file, output_file, args.min_confidence,
             args.nms_max_overlap, args.min_detection_height,
-            args.max_cosine_distance, args.nn_budget, display=False, stock=args.stock)
+            args.max_cosine_distance, args.nn_budget, display=False, stock=args.stock, track_class=args.track_class, max_age=args.max_age, min_iou_overlap=args.min_iou_overlap)

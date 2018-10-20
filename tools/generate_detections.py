@@ -3,6 +3,7 @@ import os
 import errno
 import argparse
 import numpy as np
+import h5py
 import cv2
 import tensorflow as tf
 
@@ -115,7 +116,7 @@ def create_box_encoder(model_filename, input_name="images",
     return encoder
 
 
-def generate_detections(encoder, mot_dir, output_dir, detection_dir=None, is_npy_detection=False):
+def generate_detections(encoder, mot_dir, output_dir, detection_dir=None, detection_format='txt'):
     """Generate detections with features.
 
     Parameters
@@ -154,15 +155,19 @@ def generate_detections(encoder, mot_dir, output_dir, detection_dir=None, is_npy
             int(os.path.splitext(f)[0]): os.path.join(image_dir, f)
             for f in os.listdir(image_dir)}
 
-        if is_npy_detection:
+        if detection_format=='npy':
             detection_file = os.path.join(detection_dir, "{}.npy".format(sequence))
             detections_in = np.load(detection_file)
-            detections_out = []
-        else:
+        elif detection_format == 'h5':
+            detection_file = os.path.join(detection_dir, "{}.h5".format(sequence))
+            detections_in = h5py.File(detection_file).get("data").value
+        elif detection_format == 'txt':
             detection_file = os.path.join(
                 detection_dir, sequence, "det/det.txt")
             detections_in = np.loadtxt(detection_file, delimiter=',')
-            detections_out = []
+        else:
+            raise ValueError('detection_format wasn\'t txt, h5, or npy')
+        detections_out = []
 
         frame_indices = detections_in[:, 0].astype(np.int)
         min_frame_idx = frame_indices.astype(np.int).min()
@@ -207,7 +212,7 @@ def parse_args():
         "--output_dir", help="Output directory. Will be created if it does not"
         " exist.", default="detections")
     parser.add_argument(
-        "--is-npy-detection", help="is the MOT detection folder in the form folder/<name>.npy as opposed to folder/<name>/det/det.txt", action="store_true", default='false')
+        "--detection_format", help="is the MOT detection folder in the form folder/<name>.npy (npy) or folder/<name>.h5 (h5) as opposed to folder/<name>/det/det.txt (txt, default)", default='txt', type=str)
     return parser.parse_args()
 
 
@@ -215,7 +220,7 @@ def main():
     args = parse_args()
     encoder = create_box_encoder(args.model, batch_size=32)
     generate_detections(encoder, args.mot_dir, args.output_dir,
-                        args.detection_dir, args.is_npy_detection)
+                        args.detection_dir, args.detection_format)
 
 
 if __name__ == "__main__":
