@@ -45,6 +45,7 @@ def parse_args():
         , default=.3, type=float)
     parser.add_argument(
         "--max_age", help="Maximum number of frames a track will be propogated without a detection ", type=int, default=30)
+    parser.add_argument("--track_subset_file", help="much the same as the visualization script, this file should be the frame IDs you want tracked, one per line of a file", default=None)
     return parser.parse_args()
 
 if __name__ == "__main__":
@@ -60,4 +61,4 @@ if __name__ == "__main__":
         deep_sort_app.run(
             sequence_dir, detection_file, output_file, args.min_confidence,
             args.nms_max_overlap, args.min_detection_height,
-            args.max_cosine_distance, args.nn_budget, display=False, stock=args.stock, track_class=args.track_class, max_age=args.max_age, min_iou_overlap=args.min_iou_overlap)
+            args.max_cosine_distance, args.nn_budget, display=False, stock=args.stock, track_class=args.track_class, max_age=args.max_age, min_iou_overlap=args.min_iou_overlap, track_subset_file=args.track_subset_file)

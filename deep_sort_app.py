@@ -106,7 +106,7 @@ def gather_sequence_info(sequence_dir, detection_file, track_class=None):
     return seq_info
 
 
-def create_detections(detection_mat, frame_idx, min_height=0):
+def create_detections(detection_mat, frame_idx, min_height=0, subset_frames=None):
     """Create detections for given frame index from the raw detection matrix.
 
     Parameters
@@ -120,6 +120,8 @@ def create_detections(detection_mat, frame_idx, min_height=0):
     min_height : Optional[int]
         A minimum detection bounding box height. Detections that are smaller
         than this value are disregarded.
+    subset_frames : Optional[np.array()]
+        Only these frames are used
 
     Returns
     -------
@@ -127,6 +129,10 @@ def create_detections(detection_mat, frame_idx, min_height=0):
         Returns detection responses at given frame index.
 
     """
+    if subset_frames is not None and frame_idx not in subset_frames:
+        #this is empty because we are not using this frame
+        return []
+
     frame_indices = detection_mat[:, 0].astype(np.int)
     mask = frame_indices == frame_idx
 
@@ -190,10 +196,15 @@ def run(sequence_dir, detection_file, output_file, min_confidence,
 
     def frame_callback(vis, frame_idx):
         print("Processing frame %05d" % frame_idx)
+        
+        if kwargs["track_subset_file"] is not None:
+            track_subset = np.loadtxt(kwargs["track_subset_file"])
+        else: 
+            track_subset = None
 
         # Load image and generate detections.
         detections = create_detections(
-            seq_info["detections"], frame_idx, min_detection_height)
+            seq_info["detections"], frame_idx, min_detection_height, track_subset)
         detections = [d for d in detections if d.confidence >= min_confidence]
 
         # Run non-maxima suppression.

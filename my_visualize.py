@@ -24,10 +24,12 @@ parser.add_argument('--tracks_dir', default=TRACKS_DIR, type=str, help='where ar
 parser.add_argument('--image_dir', default=DATA_DIR, type=str, help='where are the videos that need to be visualized.') 
 parser.add_argument('--output_dir', default=OUTPUT_DIR, type=str, help='where to dump the data, will be created if missing. The name of the tracks folder will be appended to this path' )
 parser.add_argument('--MOT_style_images', action='store_true', default=False, help='All the images are in the form <VIDEO_ID>/img1/*' )
-parser.add_argument('--conf_threshold', default=float("inf"), type=float, help="don't show detections with a confidence below this")
+parser.add_argument('--conf_threshold', default=-float("inf"), type=float, help="don't show detections with a confidence below this")
 parser.add_argument('--visualize_frames_file', default=None, type=str, help="A file of frame indices which sould be visualized. One per line with no commas. If unset all will be visualized")
 parser.add_argument('--visualize_fraction', type=float, default=1.0, help="This is the fraction of the frames which will be visulized. By chunks of 1000")
 parser.add_argument('--track_type', type=str, default='txt', help="h5 or txt")
+parser.add_argument('--use_names', action='store_true', default=False)
+parser.add_argument('--frame_rate', type=int, default=10)
 args = parser.parse_args()
 
 CLASS_NAMES = ['__background__',
@@ -57,8 +59,8 @@ class Visualizer():
                 continue # don't visualize this detection
             color = self.colors[int(track['ID'])]
             cv2.rectangle(img, (int(track['x']), int(track['y'])), (int(track['x'] + track['w']), int(track['y'] + track['h'])), color, LINE_WIDTH)
-            USE_NAMES=False
-            if USE_NAMES:
+            
+            if args.use_names:
                 cv2.putText(img, "{} {:01.3f}".format(CLASS_NAMES[int(track['ID'])], track['conf']), (int(track['x']),  int(track['y'] - 5)), cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 2, cv2.LINE_AA)
             else:
                 cv2.putText(img, "{} {:01.3f}".format(str(int(track['ID'])), track['conf']), (int(track['x']),  int(track['y'] - 5)), cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 2, cv2.LINE_AA)
@@ -77,8 +79,10 @@ os.makedirs(output_folder, exist_ok=True)
 CHUNK_LENGTH = 1000
 
 for vid_ind, track_file in enumerate(track_files):
+    print( 'visualizing {}'.format(track_file))
     visualizer = Visualizer()
     if args.track_type == 'txt':
+        #MOD sep wasn't there
         tracks = pd.read_csv(track_file, header = None, names = ["frame", "ID", "x", "y", "w", "h", "conf", "big_x", "big_y", "big_z"])
     elif args.track_type == 'h5':
         hf = h5py.File(track_file)
@@ -87,7 +91,7 @@ for vid_ind, track_file in enumerate(track_files):
     else:
         raise ValueError('track_type wasn\'t txt or h5')
 
-    tracks.sort_values(by=['frame'])
+    tracks.sort_values(by=['frame'], inplace=True)
     #print(tracks)
     if args.MOT_style_images:
         images = sorted(glob.glob('{}/img1/*'.format(data_folders[vid_ind])))
@@ -101,7 +105,8 @@ for vid_ind, track_file in enumerate(track_files):
     if os.path.isfile(video_fname):
         os.remove(video_fname)
 
-    video_writer = cv2.VideoWriter(video_fname, cv2.VideoWriter_fourcc('M','J','P','G'), 10, (im_shape[1], im_shape[0]))
+    video_writer = cv2.VideoWriter(video_fname, cv2.VideoWriter_fourcc('M','J','P','G'), args.frame_rate, (im_shape[1], im_shape[0]))
+    #os.makedirs('{}/{}'.format(output_folder, os.path.basename(track_file).split('.')[0]), exist_ok=True)
 
     # read the indices to visualize
     if args.visualize_frames_file: # not None
@@ -125,5 +130,6 @@ for vid_ind, track_file in enumerate(track_files):
         img = cv2.imread(img_name)
         visualizer.plot(img, tracks[tracks.frame == img_ind])
         video_writer.write(img)
+        #cv2.imwrite('{}/{}/{:06d}.jpg'.format(output_folder, os.path.basename(track_file).split('.')[0], img_ind), img)
     #don't use close that might have been causing the issues
     video_writer.release()
