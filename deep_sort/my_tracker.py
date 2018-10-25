@@ -5,6 +5,7 @@ from . import kalman_filter
 from . import linear_assignment
 from . import iou_matching
 from .track import Track
+#TODO import the cosine extractor
 
 
 class Tracker:
@@ -53,6 +54,7 @@ class Tracker:
         self.kf = kalman_filter.KalmanFilter()
         self.tracks = []
         self._next_id = 1
+        #self.cosine_embbeder = 
 
     def predict(self): # this doesn't need to be changed at all
         """Propagate track state distributions one time step forward.
@@ -62,7 +64,7 @@ class Tracker:
         for track in self.tracks:
             track.predict(self.kf)
 
-    def update(self, detections): # this is the root of what needs to be changed
+    def update(self, detections, **kwargs): # this is the root of what needs to be changed
         """Perform measurement update and track management.
 
         Parameters
@@ -73,9 +75,17 @@ class Tracker:
         """
         # Run matching cascade.
         # here I want to know what the type of the unmatched track variable is 
+        #TODO
         matches, unmatched_tracks, unmatched_detections = \
             self._match(detections)
 
+        # TODO here all we need is the unmatched tracks, ALL the detections in the frame, and the images
+        # also we need the cosine extractor and some sort of cropper object
+        # actually as a first pass we could just do it based on IOU
+        # also this should be done properly with a flag which can turn in on of off
+        # use kwargs for in images and the detections
+        
+        print('matches {}, unmatched_tracks {}, unmatched_detections {}'.format(matches, unmatched_tracks, unmatched_detections))
         # Update track set.
         for track_idx, detection_idx in matches:
             self.tracks[track_idx].update(
@@ -121,6 +131,7 @@ class Tracker:
             track.features = []
         self.metric.partial_fit(
             np.asarray(features), np.asarray(targets), active_targets)
+        #this is the end of update
 
     def _match(self, detections):
 

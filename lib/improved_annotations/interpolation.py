@@ -5,7 +5,7 @@ from scipy.interpolate import interp1d
 
 DATA_FOLDER="/home/drussel1/data/readonly/groundtruth/ADL/P_{:02d}.csv"
 
-def interpolate(slice_, id_, style='linear'):
+def interpolate(slice_, style='linear'):
     is_first = True
 
     # weird half-scale error 
@@ -16,6 +16,7 @@ def interpolate(slice_, id_, style='linear'):
     frame = np.array(slice_['frame'])
     
     x = np.arange(frame[0], frame[-1] + 1)
+    IDs = np.full(x.shape, slice_['ID'].index[0]) 
     
     # linear
     if style == 'linear':
@@ -31,7 +32,6 @@ def interpolate(slice_, id_, style='linear'):
         interp_ymax = ymax
         interp_frame = frame
     elif style == 'cubic': 
-        print(frame.shape)
         if frame.shape[0] == 1:
             # you can't do cubic interpolation on one point
             interp_xmin = xmin
@@ -56,14 +56,39 @@ def interpolate(slice_, id_, style='linear'):
     width = interp_xmax - interp_xmin
     height= interp_ymax - interp_ymin
 
-    IDs = np.full(interp_xmin.shape, id_)
     conf = np.ones(interp_xmin.shape)
     XYZ = np.full((interp_xmin.shape[0], 3), -1)
 
     out = np.concatenate((np.expand_dims(interp_frame, 1), np.expand_dims(IDs, 1), np.expand_dims(interp_xmin, 1), np.expand_dims(interp_ymin, 1), np.expand_dims(width, 1), np.expand_dims(height, 1), np.expand_dims(conf, 1), XYZ), axis=1)
+    #print('expanded',np.expand_dims(IDs, 1).shape)
+    #print('interp', np.expand_dims(interp_xmin, 1).shape)
+    #out = np.concatenate((np.expand_dims(interp_frame, 1), np.expand_dims(interp_xmin, 1), np.expand_dims(interp_ymin, 1), np.expand_dims(width, 1), np.expand_dims(height, 1), np.expand_dims(conf, 1), XYZ), axis=1)
 
     print(out.shape)
     return out
+
+def break_tracks(slice_, max_seperation=30):
+    """this function takes a slice of a dataframe where all of the annotaitons have
+    one ID and return as set/list/something of them split such that each chunk is temporally 
+    consistent"""
+    # I think it's easiest to just return a list of views
+    frames = slice_['frame'].values
+    diffs  = np.diff(frames)
+    breaks = diffs > max_seperation 
+    where = list(np.where(breaks)[0])
+    first = [0] + where[:-1]
+
+    output_views = []
+
+    for i, ind in enumerate(where):
+        output_views.append(slice_[first[i]: ind])
+
+    if len(where) > 0:
+        output_views.append(slice_.ix[where[-1]: len(frames)])
+     
+    print(output_views)
+    return output_views
+
 
 STYLE = 'cubic'
 OUTPUT_DIR = "/home/drussel1/data/readonly/groundtruth/ADL_linear_interpolation"
@@ -74,13 +99,14 @@ for i in range(1,21):
     df.sort_values(by=['ID', 'frame'], inplace=True)
     
     IDs = set(df['ID'].tolist())
+    chunk_list = []
     output_list = []
-    for id_ in IDs:
-        output_list.append(interpolate(df[df['ID'] == id_], id_, style=STYLE))
+    for id_ in IDs: 
+        chunk_list += break_tracks(df[df['ID'] == id_])
+
+    chunk_list = [x for x in chunk_list if len(x) > 0]
+    for chunk in chunk_list: 
+        output_list.append(interpolate(chunk, style=STYLE))
 
     full_output = np.concatenate((output_list), axis=0)
     np.savetxt('/home/drussel1/data/readonly/groundtruth/ADL_{}_interpolation/P_{}.txt'.format(STYLE, padded_index), full_output, fmt='%i')
-        
-        
-
-    

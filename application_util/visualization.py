@@ -100,7 +100,8 @@ class Visualization(object):
     def run(self, frame_callback):
         self.viewer.run(lambda: self._update_fun(frame_callback))
 
-    def _update_fun(self, frame_callback, display=False):
+    # MOD display was set to False
+    def _update_fun(self, frame_callback, display=True):
         if self.frame_idx > self.last_idx:
             return False  # Terminate
         if display:

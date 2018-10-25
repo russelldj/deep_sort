@@ -203,19 +203,35 @@ def run(sequence_dir, detection_file, output_file, min_confidence,
             track_subset = None
 
         # Load image and generate detections.
+
+        # this is is what should be called detections
         detections = create_detections(
             seq_info["detections"], frame_idx, min_detection_height, track_subset)
-        detections = [d for d in detections if d.confidence >= min_confidence]
+        
+        # this is the high confidence detections
+        high_confidence_detections = [d for d in detections if d.confidence >= min_confidence]
+        # These are the low confidences ones and we don't need to run NMS on them because the goal is to retain as much information as possible
+        # these should be cmpletely disjoint
+        low_confidence_detections = [d for d in detections if d.confidence < min_confidence]
 
         # Run non-maxima suppression.
-        boxes = np.array([d.tlwh for d in detections])
-        scores = np.array([d.confidence for d in detections])
+        # these should only be from high conf detections
+        # hc = high_conf
+        hc_boxes = np.array([d.tlwh for d in high_confidence_detections])
+        hc_scores = np.array([d.confidence for d in high_confidence_detections])
+
         indices = preprocessing.non_max_suppression(
-            boxes, nms_max_overlap, scores)
-        detections = [detections[i] for i in indices]
+            hc_boxes, nms_max_overlap, hc_scores)
+
+        hc_nms_positive_detections = [detections[i] for i in indices] # I think you can just do this by indexing
+        # this should negate the value from the line above
+        # there might be a cleaner way to do this with sets
+        hc_nms_negative_detections = [detections[i] for i in range(len(detections)) if i not in indices]
+        assert len(hc_nms_positive_detections) + len(hc_nms_negative_detections) == len(detections), "This operation should just be partitioning detections into two subsets"
 
         # Update tracker.
         # These are the important lines which need to be changed
+        # TODO in these lines 
         tracker.predict()
         tracker.update(detections)
 
@@ -281,7 +297,7 @@ def parse_args():
     parser.add_argument(
         "--nn_budget", help="Maximum size of the appearance descriptors "
         "gallery. If None, no budget is enforced.", type=int, default=None)
-    parser.add_argument('--display', default=False, action='store_true', help='Show intermediate tracking results')
+    parser.add_argument('--display', default=True, action='store_true', help='Show intermediate tracking results')
     #parser.add_argument(
     #    "--display", help="Show intermediate tracking results",
     #    default=False, action='store_true', type=bool)
