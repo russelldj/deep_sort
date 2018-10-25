@@ -57,6 +57,7 @@ def gather_sequence_info(sequence_dir, detection_file, track_class=None):
                 # only retain the tracks with thei
                 inds = detections[:,1] == track_class
                 detections = detections[inds, :] # get only the detections which have the target class, which is the second column
+                raise ValueError("track class really shouldn't be set any longer")
 
 
         else:
@@ -194,25 +195,27 @@ def run(sequence_dir, detection_file, output_file, min_confidence,
 
     results = []
 
+
+    if kwargs["track_subset_file"] is not None:
+        good_frames = np.loadtxt(kwargs["track_subset_file"])
+    else: 
+        good_frames = None
+
     def frame_callback(vis, frame_idx):
         print("Processing frame %05d" % frame_idx)
         
-        if kwargs["track_subset_file"] is not None:
-            track_subset = np.loadtxt(kwargs["track_subset_file"])
-        else: 
-            track_subset = None
-
-        # Load image and generate detections.
-
         # this is is what should be called detections
         detections = create_detections(
-            seq_info["detections"], frame_idx, min_detection_height, track_subset)
+            seq_info["detections"], frame_idx, min_detection_height)
         
         # this is the high confidence detections
         high_confidence_detections = [d for d in detections if d.confidence >= min_confidence]
         # These are the low confidences ones and we don't need to run NMS on them because the goal is to retain as much information as possible
         # these should be cmpletely disjoint
         low_confidence_detections = [d for d in detections if d.confidence < min_confidence]
+
+        #HACK temporarily set the value of detections to None to make sure it's not used
+        detections = None
 
         # Run non-maxima suppression.
         # these should only be from high conf detections
@@ -223,24 +226,24 @@ def run(sequence_dir, detection_file, output_file, min_confidence,
         indices = preprocessing.non_max_suppression(
             hc_boxes, nms_max_overlap, hc_scores)
 
-        hc_nms_positive_detections = [detections[i] for i in indices] # I think you can just do this by indexing
+        hc_nms_positive_detections = [high_confidence_detections[i] for i in indices] # I think you can just do this by indexing
         # this should negate the value from the line above
         # there might be a cleaner way to do this with sets
-        hc_nms_negative_detections = [detections[i] for i in range(len(detections)) if i not in indices]
-        assert len(hc_nms_positive_detections) + len(hc_nms_negative_detections) == len(detections), "This operation should just be partitioning detections into two subsets"
+        hc_nms_negative_detections = [high_confidence_detections[i] for i in range(len(high_confidence_detections)) if i not in indices]
+        assert len(hc_nms_positive_detections) + len(hc_nms_negative_detections) == len(high_confidence_detections), "This operation should just be partitioning detections into two subsets"
 
         # Update tracker.
         # These are the important lines which need to be changed
         # TODO in these lines 
         tracker.predict()
-        tracker.update(detections)
+        tracker.update(hc_nms_positive_detections)
 
         # Update visualization.
         if display:
             image = cv2.imread(
                 seq_info["image_filenames"][frame_idx], cv2.IMREAD_COLOR)
             vis.set_image(image.copy())
-            vis.draw_detections(detections)
+            vis.draw_detections(hc_nms_positive_detections)
             vis.draw_trackers(tracker.tracks)
 
         # Store results.
@@ -257,7 +260,7 @@ def run(sequence_dir, detection_file, output_file, min_confidence,
         visualizer = visualization.Visualization(seq_info, update_ms=5)
     else:
         visualizer = visualization.NoVisualization(seq_info)
-    visualizer.run(frame_callback)
+    visualizer.run(frame_callback, good_frames)
 
     # Store results.
     f = open(output_file, 'w')

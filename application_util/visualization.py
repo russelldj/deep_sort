@@ -97,17 +97,27 @@ class Visualization(object):
         self.frame_idx = seq_info["min_frame_idx"]
         self.last_idx = seq_info["max_frame_idx"]
 
-    def run(self, frame_callback):
-        self.viewer.run(lambda: self._update_fun(frame_callback))
+    def run(self, frame_callback, good_frames):
+        """only track the good frames and skip the other ones"""
+        # pass the callback and the goodframes to the self.update function
+        # I think this lambda is unneccesary
+        self.viewer.run(lambda: self._update_fun(frame_callback, good_frames=good_frames))
 
     # MOD display was set to False
-    def _update_fun(self, frame_callback, display=True):
+    def _update_fun(self, frame_callback, good_frames=None, display=True):
+        print("in _update_fun the value of self.frame_idx is {}".format(self.frame_idx))
+        if good_frames is not None and self.frame_idx not in good_frames:
+            self.frame_idx += 1
+            skip_frame = True
+            return True, skip_frame # simply do nothing on this itteration
         if self.frame_idx > self.last_idx:
-            return False  # Terminate
+            skip_frame = False
+            return False, skip_frame  # Terminate
         if display:
             frame_callback(self, self.frame_idx)
         self.frame_idx += 1
-        return True
+        skip_frame = False
+        return True, skip_frame
 
     def set_image(self, image):
         self.viewer.image = image
