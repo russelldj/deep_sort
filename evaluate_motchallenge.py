@@ -2,6 +2,7 @@
 import argparse
 import os
 import deep_sort_app
+from deep_sort import tools
 
 
 def parse_args():
@@ -50,6 +51,8 @@ def parse_args():
     return parser.parse_args()
 
 if __name__ == "__main__":
+
+    tools.pdb_on_ctrl_c()
     args = parse_args()
 
     os.makedirs(args.output_dir, exist_ok=True)

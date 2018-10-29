@@ -6,6 +6,7 @@ import os
 import cv2
 import numpy as np
 import os
+import pdb
 
 from application_util import preprocessing
 from application_util import visualization
@@ -62,9 +63,11 @@ def gather_sequence_info(sequence_dir, detection_file, track_class=None):
 
         else:
             detections = None
-    groundtruth = None
+
     if os.path.exists(groundtruth_file):
-        groundtruth = np.loadtxt(groundtruth_file, delimiter=',')
+        groundtruth = np.loadtxt(groundtruth_file, delimiter=' ')
+    else:
+        groundtruth = None
 
     if len(image_filenames) > 0:
         #input(next(iter(image_filenames.values())))
@@ -106,6 +109,45 @@ def gather_sequence_info(sequence_dir, detection_file, track_class=None):
     }
     return seq_info
 
+def create_groundtruth(groundtruth_mat, frame_idx, min_height=0):
+    """Create groundtruths for given frame index from the raw detection matrix.
+
+    Parameters
+    ----------
+    detection_mat : ndarray
+        Matrix of groundtruths. The first 10 columns of the detection matrix are
+        in the standard MOTChallenge detection format. In the remaining columns
+        store the feature vector associated with each detection.
+    frame_idx : int
+        The frame index.
+    min_height : Optional[int]
+        A minimum detection bounding box height. Detections that are smaller
+        than this value are disregarded.
+
+    Returns
+    -------
+    (List(np.array), List(np.ndarry)]
+        Returns boxes and idices for a given frame index.
+
+    """
+    #def ltrb_to_tlwh(box):
+        # input x1y1x2y2
+        # output
+        # return np.array([box[], box[1], box[0] + box[2], box[1] + box[3]])
+
+    frame_indices = groundtruth_mat[:, 0].astype(np.int)
+    mask = frame_indices == frame_idx
+        
+    box_list = []
+    ind_list = []
+
+    for row in groundtruth_mat[mask]:
+        box, ind = row[2:6], row[1] 
+        if box[3] < min_height:
+            continue
+        box_list.append(2*box)
+        ind_list.append(ind)
+    return ind_list, box_list
 
 def create_detections(detection_mat, frame_idx, min_height=0, subset_frames=None):
     """Create detections for given frame index from the raw detection matrix.
@@ -130,10 +172,6 @@ def create_detections(detection_mat, frame_idx, min_height=0, subset_frames=None
         Returns detection responses at given frame index.
 
     """
-    if subset_frames is not None and frame_idx not in subset_frames:
-        #this is empty because we are not using this frame
-        return []
-
     frame_indices = detection_mat[:, 0].astype(np.int)
     mask = frame_indices == frame_idx
 
@@ -185,7 +223,7 @@ def run(sequence_dir, detection_file, output_file, min_confidence,
         "cosine", max_cosine_distance, nn_budget)
     if stock:
         print('initializing a stock tracker')
-        tracker = Tracker(metric)
+        tracker = Tracker(metric, max_age=kwargs['max_age'], max_iou_distance=1.0 - kwargs['min_iou_overlap'])
     else:
         print('initializing a modified tracker')
         # the tracker now has the class as an optional argument
@@ -236,15 +274,20 @@ def run(sequence_dir, detection_file, output_file, min_confidence,
         # These are the important lines which need to be changed
         # TODO in these lines 
         tracker.predict()
-        tracker.update(hc_nms_positive_detections)
+        # read the next image because we will actually be using it now
+        image = cv2.imread(
+            seq_info["image_filenames"][frame_idx], cv2.IMREAD_COLOR)
+        tracker.update(hc_nms_positive_detections, bad_detections=hc_nms_negative_detections+low_confidence_detections, image=image)
 
         # Update visualization.
         if display:
-            image = cv2.imread(
-                seq_info["image_filenames"][frame_idx], cv2.IMREAD_COLOR)
             vis.set_image(image.copy())
+            if seq_info['groundtruth'] is not None:
+                #def create_groundtruth(groundtruth_mat, frame_idx, min_height=0):
+                vis.draw_groundtruth(*create_groundtruth(seq_info['groundtruth'], frame_idx))
             vis.draw_detections(hc_nms_positive_detections)
             vis.draw_trackers(tracker.tracks)
+            #input('image shown')
 
         # Store results.
         for track in tracker.tracks:

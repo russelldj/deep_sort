@@ -2,6 +2,7 @@
 import numpy as np
 import colorsys
 from .image_viewer import ImageViewer
+import pdb
 
 
 def create_unique_color_float(tag, hue_step=0.41):
@@ -94,6 +95,10 @@ class Visualization(object):
         self.viewer = ImageViewer(
             update_ms, image_shape, "Figure %s" % seq_info["sequence_name"])
         self.viewer.thickness = 2
+        #MOD
+        #HACK
+        #added vid
+        self.viewer.enable_videowriter("new_alg.avi", fps=10)
         self.frame_idx = seq_info["min_frame_idx"]
         self.last_idx = seq_info["max_frame_idx"]
 
@@ -123,9 +128,15 @@ class Visualization(object):
         self.viewer.image = image
 
     def draw_groundtruth(self, track_ids, boxes):
-        self.viewer.thickness = 2
         for track_id, box in zip(track_ids, boxes):
+            #input((track_id, box))
+            #create the wider black boundary
+            self.viewer.color = (0.0, 0.0, 0.0) 
+            self.viewer.thickness = 8
+            self.viewer.rectangle(*box.astype(np.int), label='')
+            # and the uniquely-colored interior
             self.viewer.color = create_unique_color_uchar(track_id)
+            self.viewer.thickness = 2
             self.viewer.rectangle(*box.astype(np.int), label=str(track_id))
 
     def draw_detections(self, detections):
@@ -135,13 +146,14 @@ class Visualization(object):
             self.viewer.rectangle(*detection.tlwh)
 
     def draw_trackers(self, tracks):
-        self.viewer.thickness = 2
+        self.viewer.thickness = 5
         for track in tracks:
-            if not track.is_confirmed() or track.time_since_update > 0:
+            
+            if not track.is_confirmed():# or track.time_since_update > 0:
                 continue
             self.viewer.color = create_unique_color_uchar(track.track_id)
             self.viewer.rectangle(
                 *track.to_tlwh().astype(np.int), label=str(track.track_id))
-            # self.viewer.gaussian(track.mean[:2], track.covariance[:2, :2],
-            #                      label="%d" % track.track_id)
+            #self.viewer.gaussian(track.mean[:2], track.covariance[:2, :2],
+            #                     label="%d" % track.track_id)
 #

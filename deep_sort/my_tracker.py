@@ -4,8 +4,12 @@ import numpy as np
 from . import kalman_filter
 from . import linear_assignment
 from . import iou_matching
+from . import tools
+from . cosine_metric_learning import cosine_inference
 from .track import Track
 #TODO import the cosine extractor
+
+import cv2
 
 
 class Tracker:
@@ -54,6 +58,7 @@ class Tracker:
         self.kf = kalman_filter.KalmanFilter()
         self.tracks = []
         self._next_id = 1
+        self._embedder = cosine_inference.CosineInference()
         #self.cosine_embbeder = 
 
     def predict(self): # this doesn't need to be changed at all
@@ -90,9 +95,69 @@ class Tracker:
         for track_idx, detection_idx in matches:
             self.tracks[track_idx].update(
                 self.kf, detections[detection_idx])
-        for track_idx in unmatched_tracks: # these places are where the births and deaths start, but they aren't finalized until later. I need to find that place
+
+        for track_idx in [i for i in unmatched_tracks if self.tracks[i].is_tentative()]: # we arent' going to do a search with these ones, I don't think
             self.tracks[track_idx].mark_missed()
 
+        # yes, this could be a lambda, but this seems more readable for now
+        # TODO this should really be a function  
+        TRY_TO_RECOVER=True
+        if [self.tracks[i] for i in unmatched_tracks if self.tracks[i].is_confirmed()] != [] and TRY_TO_RECOVER: # the set of unmatched confirmed tracks
+            print("retrying {}".format([detections[i] for i in unmatched_detections]))
+
+            def get_conf(detection):
+                return detection.confidence
+
+            bad_detections = sorted(kwargs["bad_detections"] + [detections[i] for i in unmatched_detections], key=get_conf)
+            confirmed_tracks = [
+                i for i, t in enumerate(self.tracks) if t.is_confirmed()]
+            #pdb.set_trace()
+            for bd in bad_detections:
+                matches, new_unmatched_tracks, unmatched_detections = \
+                            linear_assignment.matching_cascade(
+                                    self.gated_metric, self.metric.matching_threshold, self.max_age, 
+                                [self.tracks[i] for i in unmatched_tracks if self.tracks[i].is_confirmed()], [bd])#, [i for i in unmatched_tracks if self.tracks[i].is_confirmed()])
+                #[i for i in unmatched_tracks if self.tracks[i].is_confirmed()]
+                confirmed_tracks = [i for i in unmatched_tracks if self.tracks[i].is_confirmed()] 
+                assert len(matches) <= 1, "Since we are looking at only one detection at a time, there shouldn't be more matches, but instead it is {}".format(matches)
+                TRACK_IND=0
+                DET_IND=1
+                FIRST_MATCH=0
+                if len(matches) == 1: # only try to update if there's a match, otherwise you'll get a nice out of bounds error
+                    self.tracks[unmatched_tracks[matches[FIRST_MATCH][TRACK_IND]]].update(
+                        self.kf, bd) # indexing into the list of tracks by the location in the list of indeices passed in
+                # at this point the status isn't being updated, thought potentially it should be.
+                #update the unmatched tracks
+                unmatched_tracks = [confirmed_tracks[i] for i in new_unmatched_tracks]
+                if new_unmatched_tracks == []:
+                    break
+
+
+        for track_idx in unmatched_tracks: # these places are where the births and deaths start, but they aren't finalized until later. I need to find that place
+            self.tracks[track_idx].mark_missed()
+        #for bd in bad_detections:
+        #    tlbr_bb = tools.tlwh_to_tlbr(bd.tlwh)
+        #    # here we need to extract the descriptors
+        #    # which requires a cropping step and utilizing the descriptor thing
+        #    # yes it's a bit brutish to just put everything to int, but I doubt it matters
+        #    #remember that images are indexed in an i, j convention rather than x first
+        #    crop = kwargs["image"][int(tlbr_bb[1]):int(tlbr_bb[3]), int(tlbr_bb[0]):int(tlbr_bb[2])] 
+        #    # perhaps unnecessary copy here 
+        #    crop = cv2.resize(crop.copy(), (128, 128)) # TODO decide if I need flag here for a non-default style
+        #    cv2.destroyAllWindows()
+        #    cv2.imshow("crop", crop)
+        #    crop = np.expand_dims(crop, 0)
+        #    features.append(self._embedder.get_features(crop)[0])
+
+             # we don't want to compute features multiple times
+             # this is where I want to match with the low conf detections
+             # I'm going to allow mulitiple tracks to match with the same detection
+             # You want to compute a list of features, but not all of them at once
+             # TODO 
+             #this is where we actually do the matching
+             # It seems like I can just do the same sort of matching as done before, with all feasible tracks and the new detection
+             # It would be computationally better to remove detections which don't overlap, but this will be handled implicitly by the gating function
+          
 
         # get the deleted tracks
         deleted_tracks = [t for t in self.tracks if t.is_deleted()]
@@ -133,17 +198,19 @@ class Tracker:
             np.asarray(features), np.asarray(targets), active_targets)
         #this is the end of update
 
+    def gated_metric(self, tracks, dets, track_indices, detection_indices):
+        features = np.array([dets[i].feature for i in detection_indices])
+        targets = np.array([tracks[i].track_id for i in track_indices])
+        cost_matrix = self.metric.distance(features, targets)
+        cost_matrix = linear_assignment.gate_cost_matrix(
+            self.kf, cost_matrix, tracks, dets, track_indices,
+            detection_indices)
+
+        return cost_matrix
+
+
     def _match(self, detections):
 
-        def gated_metric(tracks, dets, track_indices, detection_indices):
-            features = np.array([dets[i].feature for i in detection_indices])
-            targets = np.array([tracks[i].track_id for i in track_indices])
-            cost_matrix = self.metric.distance(features, targets)
-            cost_matrix = linear_assignment.gate_cost_matrix(
-                self.kf, cost_matrix, tracks, dets, track_indices,
-                detection_indices)
-
-            return cost_matrix
 
         # Split track set into confirmed and unconfirmed tracks.
         confirmed_tracks = [
@@ -154,7 +221,7 @@ class Tracker:
         # Associate confirmed tracks using appearance features.
         matches_a, unmatched_tracks_a, unmatched_detections = \
             linear_assignment.matching_cascade(
-                gated_metric, self.metric.matching_threshold, self.max_age,
+                self.gated_metric, self.metric.matching_threshold, self.max_age,
                 self.tracks, detections, confirmed_tracks)
 
         # Associate remaining tracks together with unconfirmed tracks using IOU.
