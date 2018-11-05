@@ -83,81 +83,113 @@ class Tracker:
         #TODO
         matches, unmatched_tracks, unmatched_detections = \
             self._match(detections)
-
-        # TODO here all we need is the unmatched tracks, ALL the detections in the frame, and the images
-        # also we need the cosine extractor and some sort of cropper object
-        # actually as a first pass we could just do it based on IOU
-        # also this should be done properly with a flag which can turn in on of off
-        # use kwargs for in images and the detections
-        
         print('matches {}, unmatched_tracks {}, unmatched_detections {}'.format(matches, unmatched_tracks, unmatched_detections))
-        # Update track set.
+        
+        # Update track set with the first round of matches
         for track_idx, detection_idx in matches:
             self.tracks[track_idx].update(
                 self.kf, detections[detection_idx])
 
         for track_idx in [i for i in unmatched_tracks if self.tracks[i].is_tentative()]: # we arent' going to do a search with these ones, I don't think
             self.tracks[track_idx].mark_missed()
-
-        # yes, this could be a lambda, but this seems more readable for now
-        # TODO this should really be a function  
-        TRY_TO_RECOVER=True
-        if [self.tracks[i] for i in unmatched_tracks if self.tracks[i].is_confirmed()] != [] and TRY_TO_RECOVER: # the set of unmatched confirmed tracks
-            print("retrying {}".format([detections[i] for i in unmatched_detections]))
-
+       
+        def retry_detections(unmatched_track_idxs_, initial_unmatched_detections_, otherwise_excluded_detections_, initialize_new_tracks=False): # It makes sense to do it like this because these are the detections which are most likely to be useful, and we shouldn't mix in the subpar ones yet
+            # all detections that get passed in should be used 
+            # all tracks which are confirmed should be used
+            # at the end it needs to return matches, unmatched tracks, and unmatched detections
+            # likely this will be in the form of actual tracks and detections, to avoid confusion and because everything is just a reference anyway
             def get_conf(detection):
                 return detection.confidence
+            
+            # do some hacking to deal with the two sorts of detections
+            unmatched_detections_ = [] 
+            for unmatched_detection in initial_unmatched_detections_:
+                unmatched_detection.was_NMS_suppressed = False # this is only for the bad ones suppressed by NMS or confidence
+                unmatched_detections_.append(unmatched_detection)
 
-            bad_detections = sorted(kwargs["bad_detections"] + [detections[i] for i in unmatched_detections], key=get_conf)
-            confirmed_tracks = [
-                i for i, t in enumerate(self.tracks) if t.is_confirmed()]
-            #pdb.set_trace()
-            for bd in bad_detections:
-                matches, new_unmatched_tracks, unmatched_detections = \
+            for suppressed_detection in otherwise_excluded_detections_:
+                suppressed_detection.was_NMS_suppressed = True # this is the other alternative
+                unmatched_detections_.append(suppressed_detection)
+                
+            detections_ = sorted(unmatched_detections_, key=get_conf)
+
+            confirmed_unmatched_tracks_ = [self.tracks[i] for i in unmatched_track_idxs_ if self.tracks[i].is_confirmed()]
+            confirmed_unmatched_track_inxs_ = [i for i in unmatched_track_idxs_ if self.tracks[i].is_confirmed()]
+            unmatched_track_idxs_ = None # make sure this doesn't get used naively agian
+
+            final_unmatched_detections_ = []
+
+            for ud in unmatched_detections_:
+                # the detection here isn't really useful
+                matches, new_unmatched_tracks, new_unmatched_detections = \
                             linear_assignment.matching_cascade(
                                     self.gated_metric, self.metric.matching_threshold, self.max_age, 
-                                [self.tracks[i] for i in unmatched_tracks if self.tracks[i].is_confirmed()], [bd])#, [i for i in unmatched_tracks if self.tracks[i].is_confirmed()])
-                #[i for i in unmatched_tracks if self.tracks[i].is_confirmed()]
-                confirmed_tracks = [i for i in unmatched_tracks if self.tracks[i].is_confirmed()] 
-                assert len(matches) <= 1, "Since we are looking at only one detection at a time, there shouldn't be more matches, but instead it is {}".format(matches)
-                TRACK_IND=0
-                DET_IND=1
-                FIRST_MATCH=0
-                if len(matches) == 1: # only try to update if there's a match, otherwise you'll get a nice out of bounds error
-                    self.tracks[unmatched_tracks[matches[FIRST_MATCH][TRACK_IND]]].update(
-                        self.kf, bd) # indexing into the list of tracks by the location in the list of indeices passed in
-                # at this point the status isn't being updated, thought potentially it should be.
-                #update the unmatched tracks
-                unmatched_tracks = [confirmed_tracks[i] for i in new_unmatched_tracks]
-                if new_unmatched_tracks == []:
-                    break
+                                    confirmed_unmatched_tracks_, [ud]) # this can't be easily cached as unmatched tracks keeps getting shorter
+                assert len(matches) <= 1, "there is only one detection, so there shouldn't be more than one match"
+                if len(matches) == 1:
+                    TRACK_LOCATION = 0
+                    ONLY_MATCH = 0
+                    confirmed_unmatched_tracks_[matches[ONLY_MATCH][TRACK_LOCATION]].update(self.kf, ud) # update the relavanent track
+                    # HACK
+                elif initialize_new_tracks:
+                    #mark that this detection was missed
+                    final_unmatched_detections_.append(ud)
+                    
+                confirmed_unmatched_tracks_ = [confirmed_unmatched_tracks_[i] for i, _ in enumerate(confirmed_unmatched_tracks_) if i not in new_unmatched_tracks] # this array will get returned
+                BREAK_EARLY = False # it appears that this is a bad idea
+                assert not BREAK_EARLY, "just for now, I don't want this on"
+                if BREAK_EARLY:
+                    if len(confirmed_unmatched_tracks_) == 0:
+                        break # we are done, though maybe all of the detections should actually be matched confirmed_unmatched_track_inxs_ = [self.tracks.index(c_u_t) for c_u_t in confirmed_unmatched_tracks_]
+            non_NMS_final_unmatched_detections = [ud for ud in final_unmatched_detections_ if not ud.was_NMS_suppressed]
+            for ud in non_NMS_final_unmatched_detections:
+                self._initiate_track(ud)
 
+            #input("non_NMS_final_unmatched_detections {}\n, initial_unmatched_detections_ {}\n bad_detections {}".format(non_NMS_final_unmatched_detections, initial_unmatched_detections_,otherwise_excluded_detections_))
+            return confirmed_unmatched_track_inxs_
+        
+        USE_LOW_CONF = True
+        if kwargs["use_unmatched"]:
+            #unmatched_tracks is really the indices
+            if USE_LOW_CONF:
+                unmatched_track_inxs_ = retry_detections(unmatched_tracks, [detections[i] for i in unmatched_detections], kwargs["bad_detections"], initialize_new_tracks=True)
+            else:
+                unmatched_track_inxs_ = retry_detections(unmatched_tracks, [detections[i] for i in unmatched_detections], [], initialize_new_tracks=True)
+        else:
+            # if not 
+            #TODO loop thorugh all of the bad detections
+            unmatched_track_inxs_ = unmatched_tracks # just a hack
+            for ud in [detections[i] for i in unmatched_detections]:
+                self._initiate_track(ud)
 
-        for track_idx in unmatched_tracks: # these places are where the births and deaths start, but they aren't finalized until later. I need to find that place
-            self.tracks[track_idx].mark_missed()
-        #for bd in bad_detections:
-        #    tlbr_bb = tools.tlwh_to_tlbr(bd.tlwh)
-        #    # here we need to extract the descriptors
-        #    # which requires a cropping step and utilizing the descriptor thing
-        #    # yes it's a bit brutish to just put everything to int, but I doubt it matters
-        #    #remember that images are indexed in an i, j convention rather than x first
-        #    crop = kwargs["image"][int(tlbr_bb[1]):int(tlbr_bb[3]), int(tlbr_bb[0]):int(tlbr_bb[2])] 
-        #    # perhaps unnecessary copy here 
-        #    crop = cv2.resize(crop.copy(), (128, 128)) # TODO decide if I need flag here for a non-default style
-        #    cv2.destroyAllWindows()
-        #    cv2.imshow("crop", crop)
-        #    crop = np.expand_dims(crop, 0)
-        #    features.append(self._embedder.get_features(crop)[0])
+        for unmatched_track_inx_ in unmatched_track_inxs_: # these places are where the births and deaths start, but they aren't finalized until later. I need to find that place
+            print("marking new one missed")
+            self.tracks[unmatched_track_inx_].mark_missed()
+        
+        #TRY_TO_RECOVER=True
+        #if [self.tracks[i] for i in unmatched_tracks if self.tracks[i].is_confirmed()] != [] and TRY_TO_RECOVER: # the set of unmatched confirmed tracks
+        #    print("retrying {}".format([detections[i] for i in unmatched_detections]))
 
-             # we don't want to compute features multiple times
-             # this is where I want to match with the low conf detections
-             # I'm going to allow mulitiple tracks to match with the same detection
-             # You want to compute a list of features, but not all of them at once
-             # TODO 
-             #this is where we actually do the matching
-             # It seems like I can just do the same sort of matching as done before, with all feasible tracks and the new detection
-             # It would be computationally better to remove detections which don't overlap, but this will be handled implicitly by the gating function
-          
+        #    for bd in bad_detections:
+        #        matches, new_unmatched_tracks, unmatched_detections = \
+        #                    linear_assignment.matching_cascade(
+        #                            self.gated_metric, self.metric.matching_threshold, self.max_age, 
+        #                        [self.tracks[i] for i in unmatched_tracks if self.tracks[i].is_confirmed()], [bd]) # this can't be easily cached as unmatched tracks keeps getting shorter
+        #        # this is just to avoid confusion later
+        #        confirmed_tracks = [i for i in unmatched_tracks if self.tracks[i].is_confirmed()] 
+        #        assert len(matches) <= 1, "Since we are looking at only one detection at a time, there shouldn't be more matches, but instead it is {}".format(matches)
+        #        TRACK_IND=0  # for indexing readablity
+        #        DET_IND=1
+        #        FIRST_MATCH=0
+        #        if len(matches) == 1: # only try to update if there's a match, otherwise you'll get an OOBE
+        #            self.tracks[unmatched_tracks[matches[FIRST_MATCH][TRACK_IND]]].update(
+        #                self.kf, bd) # indexing into the list of tracks by the location in the list of indices passed in
+
+        #        #update the unmatched tracks
+        #        unmatched_tracks = [confirmed_tracks[i] for i in new_unmatched_tracks]
+        #        # the whole point of this loop is to deal with unmatched tracks, so if there aren't any left, there's no reason to continue
+        #        if new_unmatched_tracks == []:
+        #            break
 
         # get the deleted tracks
         deleted_tracks = [t for t in self.tracks if t.is_deleted()]
@@ -179,11 +211,6 @@ class Tracker:
                     num_adds += 1
 
             #print('the best occluder candidate for {} is {}'.format(deleted_track.track_id, best_occluder))
-
-        # it seems tracks should be initialized after killing the other ones
-        for detection_idx in unmatched_detections:
-            self._initiate_track(detections[detection_idx])
-
 
         # Update distance metric.
         active_targets = [t.track_id for t in self.tracks if t.is_confirmed()]

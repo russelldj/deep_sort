@@ -68,6 +68,9 @@ class Visualizer():
 
 data_folders = sorted(glob.glob('{}/*'.format(args.image_dir)))
 track_files = sorted(glob.glob('{}/*'.format(args.tracks_dir)))
+
+track_files = list(filter(lambda x : not "score" in x.split("/")[-1], track_files))
+
 print(data_folders)
 print(track_files)
 #assert len(data_folders) == len(track_files)

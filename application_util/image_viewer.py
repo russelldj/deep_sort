@@ -110,10 +110,6 @@ class ImageViewer(object):
         self._color = (0, 0, 0)
         self.text_color = (255, 255, 255)
         self.thickness = 1
-        #HACK
-        #FRAME_RATE = 10
-        #VIDEO_FNAME = "new_alg.avi"
-        #self.video_writer = cv2.VideoWriter(VIDEO_FNAME, cv2.VideoWriter_fourcc('M','J','P','G'), FRAME_RATE, (window_shape[1], window_shape[0]))
 
     @property
     def color(self):
@@ -311,8 +307,6 @@ class ImageViewer(object):
                 # again a hack to deal with negation and list unpacking
                 self._terminate = not dont_terminate
 
-
-                
             if not skip_frame: # don't visualize this one
                 t1 = time.time()
                 remaining_time = max(1, int(self._update_ms - 1e3*(t1-t0)))

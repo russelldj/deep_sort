@@ -3,6 +3,7 @@ import numpy as np
 import colorsys
 from .image_viewer import ImageViewer
 import pdb
+import random
 
 
 def create_unique_color_float(tag, hue_step=0.41):
@@ -76,9 +77,12 @@ class NoVisualization(object):
     def draw_trackers(self, trackers):
         pass
 
-    def run(self, frame_callback):
+    def run(self, frame_callback, good_frames):
         while self.frame_idx <= self.last_idx:
-            #input(self.frame_idx)
+            print(self.frame_idx)
+            if good_frames is not None and self.frame_idx not in good_frames: #this should short circuit
+                self.frame_idx += 1
+                continue
             frame_callback(self, self.frame_idx)
             self.frame_idx += 1
 
@@ -95,10 +99,16 @@ class Visualization(object):
         self.viewer = ImageViewer(
             update_ms, image_shape, "Figure %s" % seq_info["sequence_name"])
         self.viewer.thickness = 2
+        self.index_to_vis = 1
         #MOD
         #HACK
         #added vid
-        self.viewer.enable_videowriter("new_alg.avi", fps=10)
+        #self.viewer.enable_videowriter("/home/drussel1/dev/deep_sort/outputs/EPIC/visualizations/new_alg/no_new_alg.avi", fps=10)
+        #self.viewer.enable_videowriter("/home/drussel1/dev/deep_sort/outputs/EPIC/visualizations/new_alg/new_alg_low_conf_start_from_all.avi", fps=10)
+        #self.viewer.enable_videowriter("/home/drussel1/dev/deep_sort/outputs/ADL/track_visualizations/new_alg/new_alg_low_conf_start_from_all_unmatched.avi", fps=10)
+        #self.viewer.enable_videowriter("/home/drussel1/dev/deep_sort/outputs/ADL/track_visualizations/new_alg/new_alg_no_low_conf_start_from_all_unmatched.avi", fps=10)
+        #self.viewer.enable_videowriter("/home/drussel1/dev/deep_sort/outputs/ADL/track_visualizations/new_alg/new_alg_low_conf_start_from_first_unmatched.avi", fps=10)
+        #self.viewer.enable_videowriter("/home/drussel1/dev/deep_sort/outputs/ADL/track_visualizations/new_alg/no_new_alg_vis_one_track.avi", fps=10)
         self.frame_idx = seq_info["min_frame_idx"]
         self.last_idx = seq_info["max_frame_idx"]
 
@@ -111,13 +121,13 @@ class Visualization(object):
     # MOD display was set to False
     def _update_fun(self, frame_callback, good_frames=None, display=True):
         print("in _update_fun the value of self.frame_idx is {}".format(self.frame_idx))
+        if self.frame_idx > self.last_idx:
+            skip_frame = False
+            return False, skip_frame  # Terminate
         if good_frames is not None and self.frame_idx not in good_frames:
             self.frame_idx += 1
             skip_frame = True
             return True, skip_frame # simply do nothing on this itteration
-        if self.frame_idx > self.last_idx:
-            skip_frame = False
-            return False, skip_frame  # Terminate
         if display:
             frame_callback(self, self.frame_idx)
         self.frame_idx += 1
@@ -146,14 +156,41 @@ class Visualization(object):
             self.viewer.rectangle(*detection.tlwh)
 
     def draw_trackers(self, tracks):
-        self.viewer.thickness = 5
-        for track in tracks:
-            
-            if not track.is_confirmed():# or track.time_since_update > 0:
-                continue
+        ONLY_SHOW_ONE = True
+        if ONLY_SHOW_ONE: # I believe these tracks are sorted w.r.t. to seniority, so this should handle it niavely
+            # check if the one we want to visualize
+            confirmed_ids = [track.track_id for track in tracks if track.is_confirmed]
+
+            if self.index_to_vis not in confirmed_ids: # the track must have died
+                self.index_to_vis = random.choice(confirmed_ids)
+
+            track = [t for t in tracks if t.track_id == self.index_to_vis][0] # this is the cleanest way I found to get the item
+
             self.viewer.color = create_unique_color_uchar(track.track_id)
+            if track.time_since_update > 0:
+                self.viewer.thickness = 2
+            else:
+                self.viewer.thickness = 5
             self.viewer.rectangle(
                 *track.to_tlwh().astype(np.int), label=str(track.track_id))
+  
+        else:
+            for track in tracks:
+                if not track.is_confirmed():# or track.time_since_update > 0:
+                    continue
+                self.viewer.color = create_unique_color_uchar(track.track_id)
+                if track.time_since_update > 0:
+                    self.viewer.thickness = 2
+                else:
+                    self.viewer.thickness = 5
+                self.viewer.rectangle(
+                    *track.to_tlwh().astype(np.int), label=str(track.track_id))
+
+            #if track.time_since_update > 0:
+            #    self.viewer.color = (255, 255, 255)
+            #    self.viewer.thickness = 2
+            #    self.viewer.rectangle(
+            #        *track.to_tlwh().astype(np.int), label=str(track.track_id))
             #self.viewer.gaussian(track.mean[:2], track.covariance[:2, :2],
             #                     label="%d" % track.track_id)
 #

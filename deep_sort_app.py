@@ -14,6 +14,8 @@ from deep_sort import nn_matching
 from deep_sort.detection import Detection
 from deep_sort.tracker import Tracker
 from deep_sort.my_tracker import Tracker as MyTracker # make sure to avoid the namespace collision here
+from deep_sort.scorer import Scorer
+import pandas as pd
 
 
 def gather_sequence_info(sequence_dir, detection_file, track_class=None):
@@ -233,7 +235,6 @@ def run(sequence_dir, detection_file, output_file, min_confidence,
 
     results = []
 
-
     if kwargs["track_subset_file"] is not None:
         good_frames = np.loadtxt(kwargs["track_subset_file"])
     else: 
@@ -271,13 +272,11 @@ def run(sequence_dir, detection_file, output_file, min_confidence,
         assert len(hc_nms_positive_detections) + len(hc_nms_negative_detections) == len(high_confidence_detections), "This operation should just be partitioning detections into two subsets"
 
         # Update tracker.
-        # These are the important lines which need to be changed
-        # TODO in these lines 
         tracker.predict()
         # read the next image because we will actually be using it now
         image = cv2.imread(
             seq_info["image_filenames"][frame_idx], cv2.IMREAD_COLOR)
-        tracker.update(hc_nms_positive_detections, bad_detections=hc_nms_negative_detections+low_confidence_detections, image=image)
+        tracker.update(hc_nms_positive_detections, bad_detections=hc_nms_negative_detections+low_confidence_detections, image=image, use_unmatched=kwargs["use_unmatched"])
 
         # Update visualization.
         if display:
@@ -285,9 +284,9 @@ def run(sequence_dir, detection_file, output_file, min_confidence,
             if seq_info['groundtruth'] is not None:
                 #def create_groundtruth(groundtruth_mat, frame_idx, min_height=0):
                 vis.draw_groundtruth(*create_groundtruth(seq_info['groundtruth'], frame_idx))
-            vis.draw_detections(hc_nms_positive_detections)
+            #HACK for showing detections
+            #vis.draw_detections(hc_nms_positive_detections)
             vis.draw_trackers(tracker.tracks)
-            #input('image shown')
 
         # Store results.
         for track in tracker.tracks:
@@ -310,6 +309,20 @@ def run(sequence_dir, detection_file, output_file, min_confidence,
     for row in results:
         print('%d,%d,%.2f,%.2f,%.2f,%.2f,1,-1,-1,-1' % (
             row[0], row[1], row[2], row[3], row[4], row[5]),file=f)
+
+    # score results
+    if seq_info['groundtruth'] is not None:
+        scorer = Scorer()
+        # I think the groundtruths might be off by a factor of 2
+        scores = scorer.score_lists(results, seq_info['groundtruth'])
+        assert type(scores) ==  pd.DataFrame, "The results are supposed to be a dataframe"
+        last_slash_idx = output_file.rfind("/")
+        scores_output_file = "{}scores{}".format(output_file[:last_slash_idx + 1], output_file[last_slash_idx + 1:])
+        # write the scores to a (very short) file
+        scores.to_csv(scores_output_file)
+    else:
+        print("There are no groundtruths so no scoring can be done")
+
 
 
 def parse_args():

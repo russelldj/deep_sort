@@ -1,13 +1,14 @@
 import motmetrics as mm
 from collections import defaultdict, namedtuple
 import numpy as np
+import time
 
 class Scorer(object):
     def __init__(self):
         self.acc = mm.MOTAccumulator(auto_id=True)
         pass
 
-    def score_list(self, tracks, groundtruths):
+    def score_lists(self, tracks, groundtruths, frame_subset=None, name="Some sequence"):
         """ Take natively-formated tracks and groundtruths and return the string representation of the MOT metric results
 
         Parameters
@@ -21,7 +22,7 @@ class Scorer(object):
             ... import numpy as np
             ... tracks = [[15, 1, 0, 0, 100, 100], [30, 1, 100, 100, 100, 100]]
             ... gts = np.array([[0, 2, 0, 0, 100, 100, 1, -1, -1, -1], [30, 2, 100, 100, 50, 100, 1, -1, -1, -1]])
-            ... summary = scorer.score_list(tracks, gts)
+            ... summary = scorer.score_lists(tracks, gts, frame_subset=[0, 30])
             ... assert summary["num_frames"][0] == 2
             ... assert summary["mota"][0] == 0.5
             ... assert summary["motp"][0] == 0.5
@@ -30,7 +31,12 @@ class Scorer(object):
         
         # need to get all of the frames in the groundtruth, and only evaluate those
         # For now, I think we can ignore the cases where there a frames which should be groundtruths but doesn't have annotations, though if they appear to all be on multiples of 30, then I'll reconsider
+        print("Began computing scores")
         gt_frames = groundtruths[:, 0]
+
+        if frame_subset is not None:
+            gt_frames = [gtf for gtf in gt_frames if gtf in frame_subset]
+
         tracks = [track for track in tracks if track[0] in gt_frames]
       
         # perhaps poorly-named but I couldn't think of anything better
@@ -49,23 +55,26 @@ class Scorer(object):
         for gt in groundtruths:
             gt_frame = TrackFrame(frame=gt[0], ID=gt[1], bbox=gt[2:6])
             gts_dict[gt_frame.frame].append(gt_frame)
-       
+        
+        print("Cleaned the data")
+
         for frame in gt_frames:
             tracks = np.array([t.bbox for t in tracks_dict[frame]])
             gts    = np.array([g.bbox for g in gts_dict[frame]])
-
-            #print("tracks: {}\ngts: {}".format(tracks, gts))
+            
             dists = mm.distances.iou_matrix(gts, tracks) 
             track_ids = [t.ID for t in tracks_dict[frame]]
             gt_ids    = [str(g.ID) for g in gts_dict[frame]]
             frameid = self.acc.update(gt_ids, track_ids, dists)
-            #print(self.acc.mot_events.loc[frameid])
-            #print
-            #print("gts: {}\ntracks: {}\ndists: {}\n frameid: {}".format(gts, tracks, dists, frameid))
+
+        print("Finished accumulating the data")
+
         mh = mm.metrics.create()
-        summary = mh.compute(self.acc, metrics=['num_frames', 'mota', 'motp'], name='acc')
+        start = time.time()
+        summary = mh.compute(self.acc, metrics=mm.metrics.motchallenge_metrics, name=name)
+        end = time.time()
+        print("Computed the summary statistics in {} seconds".format(end - start))
         print(summary)
-        print(type(summary))
         return summary
 
 
