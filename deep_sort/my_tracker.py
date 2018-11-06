@@ -10,6 +10,7 @@ from .track import Track
 #TODO import the cosine extractor
 
 import cv2
+import pandas as pd
 
 
 class Tracker:
@@ -49,7 +50,7 @@ class Tracker:
     # Then do the death association
     # then the birth
 
-    def __init__(self, metric,  max_iou_distance=0.7, max_age=30, n_init=3): #KEY these are really important parameters 
+    def __init__(self, metric,  max_iou_distance=0.7, max_age=30, n_init=3, use_flow=False, flow_dir=""): #KEY these are really important parameters 
         self.metric = metric
         self.max_iou_distance = max_iou_distance
         self.max_age = max_age
@@ -59,7 +60,9 @@ class Tracker:
         self.tracks = []
         self._next_id = 1
         self._embedder = cosine_inference.CosineInference()
-        #self.cosine_embbeder = 
+        self.use_flow = use_flow
+        self.flow_dir = flow_dir
+        self.flow = None
 
     def predict(self): # this doesn't need to be changed at all
         """Propagate track state distributions one time step forward.
@@ -78,9 +81,9 @@ class Tracker:
             A list of detections at the current time step.
 
         """
+        if self.use_flow:
+            self.load_frame_flow(kwargs["frame_idx"])
         # Run matching cascade.
-        # here I want to know what the type of the unmatched track variable is 
-        #TODO
         matches, unmatched_tracks, unmatched_detections = \
             self._match(detections)
         print('matches {}, unmatched_tracks {}, unmatched_detections {}'.format(matches, unmatched_tracks, unmatched_detections))
@@ -93,68 +96,14 @@ class Tracker:
         for track_idx in [i for i in unmatched_tracks if self.tracks[i].is_tentative()]: # we arent' going to do a search with these ones, I don't think
             self.tracks[track_idx].mark_missed()
        
-        def retry_detections(unmatched_track_idxs_, initial_unmatched_detections_, otherwise_excluded_detections_, initialize_new_tracks=False): # It makes sense to do it like this because these are the detections which are most likely to be useful, and we shouldn't mix in the subpar ones yet
-            # all detections that get passed in should be used 
-            # all tracks which are confirmed should be used
-            # at the end it needs to return matches, unmatched tracks, and unmatched detections
-            # likely this will be in the form of actual tracks and detections, to avoid confusion and because everything is just a reference anyway
-            def get_conf(detection):
-                return detection.confidence
-            
-            # do some hacking to deal with the two sorts of detections
-            unmatched_detections_ = [] 
-            for unmatched_detection in initial_unmatched_detections_:
-                unmatched_detection.was_NMS_suppressed = False # this is only for the bad ones suppressed by NMS or confidence
-                unmatched_detections_.append(unmatched_detection)
-
-            for suppressed_detection in otherwise_excluded_detections_:
-                suppressed_detection.was_NMS_suppressed = True # this is the other alternative
-                unmatched_detections_.append(suppressed_detection)
-                
-            detections_ = sorted(unmatched_detections_, key=get_conf)
-
-            confirmed_unmatched_tracks_ = [self.tracks[i] for i in unmatched_track_idxs_ if self.tracks[i].is_confirmed()]
-            confirmed_unmatched_track_inxs_ = [i for i in unmatched_track_idxs_ if self.tracks[i].is_confirmed()]
-            unmatched_track_idxs_ = None # make sure this doesn't get used naively agian
-
-            final_unmatched_detections_ = []
-
-            for ud in unmatched_detections_:
-                # the detection here isn't really useful
-                matches, new_unmatched_tracks, new_unmatched_detections = \
-                            linear_assignment.matching_cascade(
-                                    self.gated_metric, self.metric.matching_threshold, self.max_age, 
-                                    confirmed_unmatched_tracks_, [ud]) # this can't be easily cached as unmatched tracks keeps getting shorter
-                assert len(matches) <= 1, "there is only one detection, so there shouldn't be more than one match"
-                if len(matches) == 1:
-                    TRACK_LOCATION = 0
-                    ONLY_MATCH = 0
-                    confirmed_unmatched_tracks_[matches[ONLY_MATCH][TRACK_LOCATION]].update(self.kf, ud) # update the relavanent track
-                    # HACK
-                elif initialize_new_tracks:
-                    #mark that this detection was missed
-                    final_unmatched_detections_.append(ud)
-                    
-                confirmed_unmatched_tracks_ = [confirmed_unmatched_tracks_[i] for i, _ in enumerate(confirmed_unmatched_tracks_) if i not in new_unmatched_tracks] # this array will get returned
-                BREAK_EARLY = False # it appears that this is a bad idea
-                assert not BREAK_EARLY, "just for now, I don't want this on"
-                if BREAK_EARLY:
-                    if len(confirmed_unmatched_tracks_) == 0:
-                        break # we are done, though maybe all of the detections should actually be matched confirmed_unmatched_track_inxs_ = [self.tracks.index(c_u_t) for c_u_t in confirmed_unmatched_tracks_]
-            non_NMS_final_unmatched_detections = [ud for ud in final_unmatched_detections_ if not ud.was_NMS_suppressed]
-            for ud in non_NMS_final_unmatched_detections:
-                self._initiate_track(ud)
-
-            #input("non_NMS_final_unmatched_detections {}\n, initial_unmatched_detections_ {}\n bad_detections {}".format(non_NMS_final_unmatched_detections, initial_unmatched_detections_,otherwise_excluded_detections_))
-            return confirmed_unmatched_track_inxs_
         
         USE_LOW_CONF = True
         if kwargs["use_unmatched"]:
             #unmatched_tracks is really the indices
             if USE_LOW_CONF:
-                unmatched_track_inxs_ = retry_detections(unmatched_tracks, [detections[i] for i in unmatched_detections], kwargs["bad_detections"], initialize_new_tracks=True)
+                unmatched_track_inxs_ = self.retry_detections(unmatched_tracks, [detections[i] for i in unmatched_detections], kwargs["bad_detections"], initialize_new_tracks=True)
             else:
-                unmatched_track_inxs_ = retry_detections(unmatched_tracks, [detections[i] for i in unmatched_detections], [], initialize_new_tracks=True)
+                unmatched_track_inxs_ = self.retry_detections(unmatched_tracks, [detections[i] for i in unmatched_detections], [], initialize_new_tracks=True)
         else:
             # if not 
             #TODO loop thorugh all of the bad detections
@@ -225,6 +174,61 @@ class Tracker:
             np.asarray(features), np.asarray(targets), active_targets)
         #this is the end of update
 
+    def retry_detections(self, unmatched_track_idxs_, initial_unmatched_detections_, otherwise_excluded_detections_, initialize_new_tracks=False): # It makes sense to do it like this because these are the detections which are most likely to be useful, and we shouldn't mix in the subpar ones yet
+        # all detections that get passed in should be used 
+        # all tracks which are confirmed should be used
+        # at the end it needs to return matches, unmatched tracks, and unmatched detections
+        # likely this will be in the form of actual tracks and detections, to avoid confusion and because everything is just a reference anyway
+        def get_conf(detection):
+            return detection.confidence
+        
+        # do some hacking to deal with the two sorts of detections
+        unmatched_detections_ = [] 
+        for unmatched_detection in initial_unmatched_detections_:
+            unmatched_detection.was_NMS_suppressed = False # this is only for the bad ones suppressed by NMS or confidence
+            unmatched_detections_.append(unmatched_detection)
+
+        for suppressed_detection in otherwise_excluded_detections_:
+            suppressed_detection.was_NMS_suppressed = True # this is the other alternative
+            unmatched_detections_.append(suppressed_detection)
+            
+        detections_ = sorted(unmatched_detections_, key=get_conf)
+
+        confirmed_unmatched_tracks_ = [self.tracks[i] for i in unmatched_track_idxs_ if self.tracks[i].is_confirmed()]
+        confirmed_unmatched_track_inxs_ = [i for i in unmatched_track_idxs_ if self.tracks[i].is_confirmed()]
+        unmatched_track_idxs_ = None # make sure this doesn't get used naively agian
+
+        final_unmatched_detections_ = []
+
+        for ud in unmatched_detections_:
+            # the detection here isn't really useful
+            matches, new_unmatched_tracks, new_unmatched_detections = \
+                        linear_assignment.matching_cascade(
+                                self.gated_metric, self.metric.matching_threshold, self.max_age, 
+                                confirmed_unmatched_tracks_, [ud]) # this can't be easily cached as unmatched tracks keeps getting shorter
+            assert len(matches) <= 1, "there is only one detection, so there shouldn't be more than one match"
+            if len(matches) == 1:
+                TRACK_LOCATION = 0
+                ONLY_MATCH = 0
+                confirmed_unmatched_tracks_[matches[ONLY_MATCH][TRACK_LOCATION]].update(self.kf, ud) # update the relavanent track
+                # HACK
+            elif initialize_new_tracks:
+                #mark that this detection was missed
+                final_unmatched_detections_.append(ud)
+                
+            confirmed_unmatched_tracks_ = [confirmed_unmatched_tracks_[i] for i, _ in enumerate(confirmed_unmatched_tracks_) if i not in new_unmatched_tracks] # this array will get returned
+            BREAK_EARLY = False # it appears that this is a bad idea
+            assert not BREAK_EARLY, "just for now, I don't want this on"
+            if BREAK_EARLY:
+                if len(confirmed_unmatched_tracks_) == 0:
+                    break # we are done, though maybe all of the detections should actually be matched confirmed_unmatched_track_inxs_ = [self.tracks.index(c_u_t) for c_u_t in confirmed_unmatched_tracks_]
+        non_NMS_final_unmatched_detections = [ud for ud in final_unmatched_detections_ if not ud.was_NMS_suppressed]
+        for ud in non_NMS_final_unmatched_detections:
+            self._initiate_track(ud)
+
+        #input("non_NMS_final_unmatched_detections {}\n, initial_unmatched_detections_ {}\n bad_detections {}".format(non_NMS_final_unmatched_detections, initial_unmatched_detections_,otherwise_excluded_detections_))
+        return confirmed_unmatched_track_inxs_
+
     def gated_metric(self, tracks, dets, track_indices, detection_indices):
         features = np.array([dets[i].feature for i in detection_indices])
         targets = np.array([tracks[i].track_id for i in track_indices])
@@ -236,35 +240,48 @@ class Tracker:
         return cost_matrix
 
 
+    def flow_metric(self, tracks, dets, track_indices, detection_indices):
+        dets = np.array([dets[i].tlwh for i in detection_indices])
+        targets = np.array([tracks[i].to_tlwh() for i in track_indices])
+        #use the flow which is an instance variable, and the locations of the dets and tracks
+        cost = self.compute_cost(self.flow, targets, dets)
+        return cost
+
+
     def _match(self, detections):
+        if self.use_flow:
+            matches, unmatched_tracks, unmatched_detections = \
+                linear_assignment.min_cost_matching(
+                    self.flow_metric, self.max_iou_distance,
+                    self.tracks, detections)
 
+        else:  # use the normal appearance features approach
+            # Split track set into confirmed and unconfirmed tracks.
+            confirmed_tracks = [
+                i for i, t in enumerate(self.tracks) if t.is_confirmed()]
+            unconfirmed_tracks = [
+                i for i, t in enumerate(self.tracks) if not t.is_confirmed()]
 
-        # Split track set into confirmed and unconfirmed tracks.
-        confirmed_tracks = [
-            i for i, t in enumerate(self.tracks) if t.is_confirmed()]
-        unconfirmed_tracks = [
-            i for i, t in enumerate(self.tracks) if not t.is_confirmed()]
+            # Associate confirmed tracks using appearance features.
+            matches_a, unmatched_tracks_a, unmatched_detections = \
+                linear_assignment.matching_cascade(
+                    self.gated_metric, self.metric.matching_threshold, self.max_age,
+                    self.tracks, detections, confirmed_tracks)
 
-        # Associate confirmed tracks using appearance features.
-        matches_a, unmatched_tracks_a, unmatched_detections = \
-            linear_assignment.matching_cascade(
-                self.gated_metric, self.metric.matching_threshold, self.max_age,
-                self.tracks, detections, confirmed_tracks)
+            # Associate remaining tracks together with unconfirmed tracks using IOU.
+            iou_track_candidates = unconfirmed_tracks + [
+                k for k in unmatched_tracks_a if
+                self.tracks[k].time_since_update == 1]
+            unmatched_tracks_a = [
+                k for k in unmatched_tracks_a if
+                self.tracks[k].time_since_update != 1]
+            matches_b, unmatched_tracks_b, unmatched_detections = \
+                linear_assignment.min_cost_matching(
+                    iou_matching.iou_cost, self.max_iou_distance, self.tracks,
+                    detections, iou_track_candidates, unmatched_detections)
 
-        # Associate remaining tracks together with unconfirmed tracks using IOU.
-        iou_track_candidates = unconfirmed_tracks + [
-            k for k in unmatched_tracks_a if
-            self.tracks[k].time_since_update == 1]
-        unmatched_tracks_a = [
-            k for k in unmatched_tracks_a if
-            self.tracks[k].time_since_update != 1]
-        matches_b, unmatched_tracks_b, unmatched_detections = \
-            linear_assignment.min_cost_matching(
-                iou_matching.iou_cost, self.max_iou_distance, self.tracks,
-                detections, iou_track_candidates, unmatched_detections)
-
-        matches = matches_a + matches_b
-        unmatched_tracks = list(set(unmatched_tracks_a + unmatched_tracks_b))
+            matches = matches_a + matches_b
+            unmatched_tracks = list(set(unmatched_tracks_a + unmatched_tracks_b))
         return matches, unmatched_tracks, unmatched_detections
 
     def _initiate_track(self, detection):
@@ -327,3 +344,138 @@ class Tracker:
                     best_track = track.track_id
                     highest_overlap = current_overlap
         return best_track
+
+# Flow related section
+    def compute_cost(self, flow, track_boxes, det_boxes):
+        """
+        params
+        flow : np.array
+            This is the M x N x 2 flow representation, where the first channel is x and the second is y
+        track_boxes : List[]
+            This should be the filter-predicted location in the format xywh
+        det_boxes : List[]
+            All the thresholded detections
+        returns
+        cost : np.array
+            This is the pairwise cost function with tracks on the i axis and detections on the j
+        #>>> flow = np.zeros((480, 640)) 
+        #... track_boxes = [[0,0,100,100], [0, 100, 100, 100], [100, 0, 100, 100]]
+        #... det_boxes   = [[200, 0, 100, 100], [0, 0, 100, 100]]
+        #... compute_cost(flow, track_boxes, det_boxes)
+        #None
+        """
+        cost = np.zeros((len(det_boxes), 0), dtype=int)
+        det_sizes = [d[2] * d[3] for d in det_boxes]
+        #import pdb; pdb.set_trace()
+        def ifint(float_):
+            # the kalman filter can predict that the object will move out of frame, so the values need to be clamped to the size the flow (and the iamge)
+            return int(np.clip(np.floor(float_), 0, flow.shape[0]-1))
+
+        def jfint(float_):
+            # the kalman filter can predict that the object will move out of frame, so the values need to be clamped to the size the flow (and the iamge)
+            return int(np.clip(np.floor(float_), 0, flow.shape[1]-1))
+
+        for track in track_boxes:
+            det_offsets = self.compute_offsets(track, det_boxes)
+            num_in_each = np.zeros((len(det_offsets)), dtype=int)
+            max_x_flow = -10000
+            for i_idx in range(ifint(track[3])):
+                for j_idx in range(jfint(track[2])):
+                    flow_pixel = flow[i_idx, j_idx, :]
+                    max_x_flow = max(max_x_flow, flow_pixel[0])
+                    #print('flow pixel {}'.format(flow_pixel))
+                    # tally which detection each flow pixel lands in
+                    num_in_each += self.check_offsets(i_idx, j_idx, flow_pixel, det_offsets)
+                    
+            print("track is {} and max x flow is {}".format(track, max_x_flow))
+            # there needs to some sort of normalized w.r.t. to the area of the dections and the tracks
+            #TODO normalize the values of num_in_each 
+            track_size = track[2] * track[3]
+            # make this metric as similar to the  standard IOU metric as possible
+            # like IOU, this metric should be bounded by [0,1]
+            normalization_factor = np.asarray([det_size + track_size - num_in_each[inx] for inx, det_size in enumerate(det_sizes)])
+            num_in_each = np.divide(num_in_each, normalization_factor)
+            cost = np.append(cost, np.expand_dims(num_in_each, axis=1), axis=1)
+
+        cost = np.transpose(cost) # IMPORTANT make sure the i axis is the length of the track vector
+        return 1 - cost # this is because higher IOU is better but the matching is posed as a cost
+
+
+    def check_offsets(self, i_idx, j_idx, flow_pixel, det_offsets):
+        """
+        params:
+                                ---------- 
+        i_idx : int
+            location in the track
+        j_idx : int 
+            location in the track
+        flow_pixel : ArrayLike
+            the x and y component of the flow
+        offsets : List[ArrayLike]
+            the offsets between the top left corner of the track and the detections
+
+        returns
+        ----------
+        matches : List[Bool]
+
+        """
+        #check that this is correct, the y might be first
+        x_offset = j_idx + flow_pixel[0]
+        y_offset = i_idx + flow_pixel[1]
+        matches = []
+        for det_offset in det_offsets:
+            if x_offset >= det_offset[0] and x_offset <= det_offset[2] and \
+                y_offset >= det_offset[1] and y_offset <= det_offset[3]:
+                                                                    matches.append(True)
+            else:
+                #print("x_offset: {}, y_offset: {}".format(x_offset, y_offset))
+                matches.append(False)
+        return np.array(matches, dtype=int)
+
+    def compute_offsets(self, track_box, det_boxes):
+        """
+        params:
+                                ----------  
+        track_box : ArrayLike
+            This should be in the form [l, t, w, h]
+        det_boxes : List[ArrayLike] 
+            This is a list of all detections in the same form as above
+        returns
+        ----------  
+        offsets : List[ArrayLike] 
+            The offset between the top left corner of the track and the top left and bottom right corners of the detection.
+
+        """
+        offsets = []
+        for det_box in det_boxes:
+            offset = (det_box[0] - track_box[0],\
+            det_box[1] - track_box[1],\
+            det_box[0] + det_box[2] - track_box[0],\
+            det_box[1] + det_box[3] - track_box[1])
+            offsets.append(offset)
+        return offsets
+    
+    def load_frame_flow(self, frame_idx):
+        self.frame_idx = frame_idx
+        flow_prefix = "{}/{:06d}".format(self.flow_dir, self.frame_idx)
+        self.flow = self.load_flow(flow_prefix)
+
+    def load_flow(self, flow_prefix):
+        # there might be a missing scale factor
+        x_flow = cv2.imread("{}_x.jpg".format(flow_prefix)) / 255.0 # they are both saved in the range 0-255
+        y_flow = cv2.imread("{}_y.jpg".format(flow_prefix)) / 255.0
+        minmax = pd.read_csv("{}_minmax.txt".format(flow_prefix), sep=":", names=["values"], index_col=0)
+
+        xmin = minmax["values"]["xmin"]
+        ymin = minmax["values"]["ymin"]
+        xmax = minmax["values"]["xmax"]
+        ymax = minmax["values"]["ymax"]
+
+        x_range = xmax - xmin
+        y_range = ymax - ymin
+
+        x_flow = x_flow * x_range + xmin
+        y_flow = y_flow * y_range + ymin
+
+        return np.concatenate((x_flow[...,0:1], y_flow[...,0:1]), axis=2) # keep the dimensionality with 0:1
+

@@ -79,7 +79,6 @@ class NoVisualization(object):
 
     def run(self, frame_callback, good_frames):
         while self.frame_idx <= self.last_idx:
-            print(self.frame_idx)
             if good_frames is not None and self.frame_idx not in good_frames: #this should short circuit
                 self.frame_idx += 1
                 continue
@@ -92,7 +91,7 @@ class Visualization(object):
     This class shows tracking output in an OpenCV image viewer.
     """
 
-    def __init__(self, seq_info, update_ms):
+    def __init__(self, seq_info, update_ms, video_output_file=None):
         image_shape = seq_info["image_size"][::-1]
         aspect_ratio = float(image_shape[1]) / image_shape[0]
         image_shape = 1024, int(aspect_ratio * 1024)
@@ -103,12 +102,8 @@ class Visualization(object):
         #MOD
         #HACK
         #added vid
-        #self.viewer.enable_videowriter("/home/drussel1/dev/deep_sort/outputs/EPIC/visualizations/new_alg/no_new_alg.avi", fps=10)
-        #self.viewer.enable_videowriter("/home/drussel1/dev/deep_sort/outputs/EPIC/visualizations/new_alg/new_alg_low_conf_start_from_all.avi", fps=10)
-        #self.viewer.enable_videowriter("/home/drussel1/dev/deep_sort/outputs/ADL/track_visualizations/new_alg/new_alg_low_conf_start_from_all_unmatched.avi", fps=10)
-        #self.viewer.enable_videowriter("/home/drussel1/dev/deep_sort/outputs/ADL/track_visualizations/new_alg/new_alg_no_low_conf_start_from_all_unmatched.avi", fps=10)
-        #self.viewer.enable_videowriter("/home/drussel1/dev/deep_sort/outputs/ADL/track_visualizations/new_alg/new_alg_low_conf_start_from_first_unmatched.avi", fps=10)
-        #self.viewer.enable_videowriter("/home/drussel1/dev/deep_sort/outputs/ADL/track_visualizations/new_alg/no_new_alg_vis_one_track.avi", fps=10)
+        if video_output_file is not None:
+            self.viewer.enable_videowriter(video_output_file, fps=10)
         self.frame_idx = seq_info["min_frame_idx"]
         self.last_idx = seq_info["max_frame_idx"]
 
@@ -120,7 +115,6 @@ class Visualization(object):
 
     # MOD display was set to False
     def _update_fun(self, frame_callback, good_frames=None, display=True):
-        print("in _update_fun the value of self.frame_idx is {}".format(self.frame_idx))
         if self.frame_idx > self.last_idx:
             skip_frame = False
             return False, skip_frame  # Terminate
@@ -156,10 +150,11 @@ class Visualization(object):
             self.viewer.rectangle(*detection.tlwh)
 
     def draw_trackers(self, tracks):
-        ONLY_SHOW_ONE = True
+        ONLY_SHOW_ONE = False
+        #import pdb; pdb.set_trace()
         if ONLY_SHOW_ONE: # I believe these tracks are sorted w.r.t. to seniority, so this should handle it niavely
             # check if the one we want to visualize
-            confirmed_ids = [track.track_id for track in tracks if track.is_confirmed]
+            confirmed_ids = [track.track_id for track in tracks if track.is_confirmed()]
 
             if self.index_to_vis not in confirmed_ids: # the track must have died
                 self.index_to_vis = random.choice(confirmed_ids)
@@ -176,8 +171,9 @@ class Visualization(object):
   
         else:
             for track in tracks:
-                if not track.is_confirmed():# or track.time_since_update > 0:
-                    continue
+                #HACK
+                #if not track.is_confirmed():# or track.time_since_update > 0:
+                #    continue
                 self.viewer.color = create_unique_color_uchar(track.track_id)
                 if track.time_since_update > 0:
                     self.viewer.thickness = 2

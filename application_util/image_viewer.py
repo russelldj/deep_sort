@@ -314,6 +314,10 @@ class ImageViewer(object):
                     self._video_writer.write(
                         cv2.resize(self.image, self._window_shape))
                 else:
+                    # HACK
+                    print("THis image really should be displaying and not being writing to out.png")
+                    cv2.imwrite(
+                        "out.png", cv2.resize(self.image, self._window_shape[:2]))
                     cv2.imshow(
                         self._caption, cv2.resize(self.image, self._window_shape[:2]))
                     key = cv2.waitKey(remaining_time)
@@ -333,10 +337,10 @@ class ImageViewer(object):
         # is called.
         #
         # see https://github.com/Itseez/opencv/issues/4535
-        self.image[:] = 0
-        cv2.destroyWindow(self._caption)
-        cv2.waitKey(1)
-        cv2.imshow(self._caption, self.image)
+        #self.image[:] = 0
+        #cv2.destroyWindow(self._caption)
+        #cv2.waitKey(1)
+        #cv2.imshow(self._caption, self.image)
 
     def stop(self):
         """Stop the control loop.

@@ -13,7 +13,8 @@ from application_util import visualization
 from deep_sort import nn_matching
 from deep_sort.detection import Detection
 from deep_sort.tracker import Tracker
-from deep_sort.my_tracker import Tracker as MyTracker # make sure to avoid the namespace collision here
+from deep_sort.my_tracker import Tracker as MyTracker # make sure to avoid the namespace collision here;
+from deep_sort.flow_tracker import FlowTracker
 from deep_sort.scorer import Scorer
 import pandas as pd
 
@@ -229,9 +230,7 @@ def run(sequence_dir, detection_file, output_file, min_confidence,
     else:
         print('initializing a modified tracker')
         # the tracker now has the class as an optional argument
-        #MOD changed the max age from 30 to 90
-        #TODO'
-        tracker = MyTracker(metric, max_age=kwargs['max_age'], max_iou_distance=1.0 - kwargs['min_iou_overlap']) # the IOU is inverted as 1 - IOU in the cost matrix
+        tracker = MyTracker(metric, max_age=kwargs['max_age'], max_iou_distance=1.0 - kwargs['min_iou_overlap'], use_flow=kwargs["use_flow"], flow_dir="/home/drussel1/data/ADL/flows") # the IOU is inverted as 1 - IOU in the cost matrix
 
     results = []
 
@@ -276,7 +275,7 @@ def run(sequence_dir, detection_file, output_file, min_confidence,
         # read the next image because we will actually be using it now
         image = cv2.imread(
             seq_info["image_filenames"][frame_idx], cv2.IMREAD_COLOR)
-        tracker.update(hc_nms_positive_detections, bad_detections=hc_nms_negative_detections+low_confidence_detections, image=image, use_unmatched=kwargs["use_unmatched"])
+        tracker.update(hc_nms_positive_detections, bad_detections=hc_nms_negative_detections+low_confidence_detections, image=image, use_unmatched=kwargs["use_unmatched"], frame_idx=frame_idx)
 
         # Update visualization.
         if display:
@@ -299,7 +298,7 @@ def run(sequence_dir, detection_file, output_file, min_confidence,
 
     # Run tracker.
     if display:
-        visualizer = visualization.Visualization(seq_info, update_ms=5)
+        visualizer = visualization.Visualization(seq_info, update_ms=5, video_output_file=kwargs["video_output_file"])
     else:
         visualizer = visualization.NoVisualization(seq_info)
     visualizer.run(frame_callback, good_frames)
