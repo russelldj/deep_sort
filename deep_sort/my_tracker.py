@@ -7,11 +7,12 @@ from . import iou_matching
 from . import tools
 from . cosine_metric_learning import cosine_inference
 from .track import Track
+import multiprocessing as mp
 #TODO import the cosine extractor
 
 import cv2
 import pandas as pd
-
+import time
 
 class Tracker:
     """
@@ -346,6 +347,7 @@ class Tracker:
         return best_track
 
 # Flow related section
+
     def compute_cost(self, flow, track_boxes, det_boxes):
         """
         params
@@ -399,6 +401,86 @@ class Tracker:
 
         cost = np.transpose(cost) # IMPORTANT make sure the i axis is the length of the track vector
         return 1 - cost # this is because higher IOU is better but the matching is posed as a cost
+    #def compute_cost(self, flow, track_boxes, det_boxes):
+    #    """
+    #    params
+    #    flow : np.array
+    #        This is the M x N x 2 flow representation, where the first channel is x and the second is y
+    #    track_boxes : List[]
+    #        This should be the filter-predicted location in the format xywh
+    #    det_boxes : List[]
+    #        All the thresholded detections
+    #    returns
+    #    cost : np.array
+    #        This is the pairwise cost function with tracks on the i axis and detections on the j
+    #    #>>> flow = np.zeros((480, 640)) 
+    #    #... track_boxes = [[0,0,100,100], [0, 100, 100, 100], [100, 0, 100, 100]]
+    #    #... det_boxes   = [[200, 0, 100, 100], [0, 0, 100, 100]]
+    #    #... compute_cost(flow, track_boxes, det_boxes)
+    #    #None
+    #    """
+    #    start = time.time()
+    #    cost = np.zeros((len(det_boxes), 0), dtype=int)
+    #    det_sizes = [d[2] * d[3] for d in det_boxes]
+    #    #import pdb; pdb.set_trace()
+    #    def ifint(float_):
+    #        # the kalman filter can predict that the object will move out of frame, so the values need to be clamped to the size the flow (and the iamge)
+    #        return int(np.clip(np.floor(float_), 0, flow.shape[0]-1))
+
+    #    def jfint(float_):
+    #        # the kalman filter can predict that the object will move out of frame, so the values need to be clamped to the size the flow (and the iamge)
+    #        return int(np.clip(np.floor(float_), 0, flow.shape[1]-1))
+    #     
+    #    def compute_overlaps(det_offsets, flow, track, i_idx, output=None):
+    #        num_in_each = np.zeros((len(det_offsets)), dtype=int)
+    #        #row_start = time.time()
+    #        for j_idx in range(jfint(track[2])):
+    #            flow_pixel = flow[i_idx, j_idx, :]
+    #            #print('flow pixel {}'.format(flow_pixel))
+    #            # tally which detection each flow pixel lands in
+    #            #TODO check if this isn't efficient
+    #            num_in_each += self.check_offsets(i_idx, j_idx, flow_pixel, det_offsets)
+    #        if output is not None:
+    #            output.put(num_in_each)
+    #        else:
+    #            return num_in_each
+    #        #print("row took {} seconds".format(time.time() - row_start))
+    #    
+    #    output = []
+    #    for track in track_boxes:
+    #        for i_idx in range(ifint(track[3])):
+    #            det_offsets = self.compute_offsets(track, det_boxes)
+    #            output.append(compute_overlaps(det_offsets, flow, track, i_idx))
+
+
+    #            #output = mp.Queue()
+
+    #            #processes = [mp.Process(target=compute_overlaps, args=(det_offsets, flow, track, i_idx, output)) for i_idx in range(ifint(track[3]))]
+    #            #
+    #            #output_start = time.time()
+    #            ## Run processes
+    #            #for p in processes:
+    #            #    p.start()
+
+    #            ## Exit the completed processes
+    #            #for p in processes:
+    #            #    p.join()
+    #            #output = [output.get() for p in processes]
+    #            #print("computing the output took {} seconds".format(time.time() - output_start))
+    #            num_in_each = sum(output)
+    #            # there needs to some sort of normalized w.r.t. to the area of the dections and the tracks
+    #            #TODO normalize the values of num_in_each 
+    #            track_size = track[2] * track[3]
+    #            # make this metric as similar to the  standard IOU metric as possible
+    #            # like IOU, this metric should be bounded by [0,1]
+
+    #            normalization_factor = np.asarray([det_size + track_size - num_in_each[inx] for inx, det_size in enumerate(det_sizes)])
+    #            num_in_each = np.divide(num_in_each, normalization_factor)
+    #            cost = np.append(cost, np.expand_dims(num_in_each, axis=1), axis=1)
+
+    #    cost = np.transpose(cost) # IMPORTANT make sure the i axis is the length of the track vector
+    #    print("computing the cost took {} seconds".format(time.time() - start))
+    #    return 1 - cost # this is because higher IOU is better but the matching is posed as a cost
 
 
     def check_offsets(self, i_idx, j_idx, flow_pixel, det_offsets):
@@ -422,14 +504,16 @@ class Tracker:
         #check that this is correct, the y might be first
         x_offset = j_idx + flow_pixel[0]
         y_offset = i_idx + flow_pixel[1]
-        matches = []
-        for det_offset in det_offsets:
-            if x_offset >= det_offset[0] and x_offset <= det_offset[2] and \
-                y_offset >= det_offset[1] and y_offset <= det_offset[3]:
-                                                                    matches.append(True)
-            else:
-                #print("x_offset: {}, y_offset: {}".format(x_offset, y_offset))
-                matches.append(False)
+        #matches = []
+        #for det_offset in det_offsets:
+        #    if x_offset >= det_offset[0] and x_offset <= det_offset[2] and \
+        #        y_offset >= det_offset[1] and y_offset <= det_offset[3]:
+        #        matches.append(True)
+        #    else:
+        #        #print("x_offset: {}, y_offset: {}".format(x_offset, y_offset))
+        #        matches.append(False)
+
+        matches = [True if x_offset >= det_offset[0] and x_offset <= det_offset[2] and y_offset >= det_offset[1] and y_offset <= det_offset[3] else False for det_offset in det_offsets]
         return np.array(matches, dtype=int)
 
     def compute_offsets(self, track_box, det_boxes):
@@ -454,11 +538,13 @@ class Tracker:
             det_box[1] + det_box[3] - track_box[1])
             offsets.append(offset)
         return offsets
-    
+   
+
     def load_frame_flow(self, frame_idx):
         self.frame_idx = frame_idx
         flow_prefix = "{}/{:06d}".format(self.flow_dir, self.frame_idx)
         self.flow = self.load_flow(flow_prefix)
+
 
     def load_flow(self, flow_prefix):
         # there might be a missing scale factor
@@ -476,6 +562,7 @@ class Tracker:
 
         x_flow = x_flow * x_range + xmin
         y_flow = y_flow * y_range + ymin
-
-        return np.concatenate((x_flow[...,0:1], y_flow[...,0:1]), axis=2) # keep the dimensionality with 0:1
+         
+        #WARNING, this was inverted
+        return np.concatenate((-1 * x_flow[...,0:1], -1 * y_flow[...,0:1]), axis=2) # keep the dimensionality with 0:1
 

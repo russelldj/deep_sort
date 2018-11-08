@@ -91,7 +91,7 @@ class Visualization(object):
     This class shows tracking output in an OpenCV image viewer.
     """
 
-    def __init__(self, seq_info, update_ms, video_output_file=None):
+    def __init__(self, seq_info, update_ms, video_output_file=None, only_show_one=False):
         image_shape = seq_info["image_size"][::-1]
         aspect_ratio = float(image_shape[1]) / image_shape[0]
         image_shape = 1024, int(aspect_ratio * 1024)
@@ -99,6 +99,7 @@ class Visualization(object):
             update_ms, image_shape, "Figure %s" % seq_info["sequence_name"])
         self.viewer.thickness = 2
         self.index_to_vis = 1
+        self.only_show_one = only_show_one
         #MOD
         #HACK
         #added vid
@@ -150,13 +151,12 @@ class Visualization(object):
             self.viewer.rectangle(*detection.tlwh)
 
     def draw_trackers(self, tracks):
-        ONLY_SHOW_ONE = False
         #import pdb; pdb.set_trace()
-        if ONLY_SHOW_ONE: # I believe these tracks are sorted w.r.t. to seniority, so this should handle it niavely
+        if self.only_show_one: # I believe these tracks are sorted w.r.t. to seniority, so this should handle it niavely
             # check if the one we want to visualize
             confirmed_ids = [track.track_id for track in tracks if track.is_confirmed()]
 
-            if self.index_to_vis not in confirmed_ids: # the track must have died
+            if self.index_to_vis not in confirmed_ids and len(confirmed_ids) > 0: # the track must have died
                 self.index_to_vis = random.choice(confirmed_ids)
 
             track = [t for t in tracks if t.track_id == self.index_to_vis][0] # this is the cleanest way I found to get the item

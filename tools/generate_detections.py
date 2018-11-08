@@ -3,7 +3,7 @@ import os
 import errno
 import argparse
 import numpy as np
-import h5py
+#import h5py
 import cv2
 import tensorflow as tf
 

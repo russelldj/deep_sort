@@ -55,7 +55,16 @@ def gather_sequence_info(sequence_dir, detection_file, track_class=None):
     if detection_file is not None:
         #MOD
         if os.path.isfile(detection_file):
-            detections = np.load(detection_file)
+            _, extension = os.path.splitext(detection_file)
+            if extension == ".npy":
+                detections = np.load(detection_file)
+            elif extension == ".h5":
+                import h5py
+                import pdb; pdb.set_trace()
+                detection = h5py.File(detection_file)
+            else:
+                raise ValueError("The detection file should be .npy or .h5")
+
             #MOD
             if track_class is not None:
                 # only retain the tracks with thei
@@ -298,7 +307,7 @@ def run(sequence_dir, detection_file, output_file, min_confidence,
 
     # Run tracker.
     if display:
-        visualizer = visualization.Visualization(seq_info, update_ms=5, video_output_file=kwargs["video_output_file"])
+        visualizer = visualization.Visualization(seq_info, update_ms=5, video_output_file=kwargs["video_output_file"], only_show_one=kwargs["only_show_one"])
     else:
         visualizer = visualization.NoVisualization(seq_info)
     visualizer.run(frame_callback, good_frames)
