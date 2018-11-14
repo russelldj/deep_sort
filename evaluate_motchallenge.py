@@ -49,8 +49,8 @@ def parse_args():
     parser.add_argument("--track_subset_file", help="much the same as the visualization script, this file should be the frame IDs you want tracked, one per line of a file", default=None)
     parser.add_argument("--dont_display", help="use the visualization", action="store_true", default=False)
     parser.add_argument("--use_unmatched", help="use unmatched, low-confidence, and NMS-suppressed detections", action="store_false", default=True)
-    parser.add_argument("--video_output_file", help="instead of visualizing the frames write them to this video", type=str, default=None)
     parser.add_argument("--use-flow", help="Use optical flow rather than appearance features", action="store_true", default=False)
+    parser.add_argument("--only-show-one", help="Only show one track at a time", action="store_true", default=False)
     return parser.parse_args()
 
 if __name__ == "__main__":
@@ -65,7 +65,8 @@ if __name__ == "__main__":
         sequence_dir = os.path.join(args.mot_dir, sequence)
         detection_file = os.path.join(args.detection_dir, "%s.npy" % sequence)
         output_file = os.path.join(args.output_dir, "%s.txt" % sequence)
+        video_output_file = os.path.join(args.output_dir, "{}_video.avi".format(sequence))
         deep_sort_app.run(
             sequence_dir, detection_file, output_file, args.min_confidence,
             args.nms_max_overlap, args.min_detection_height,
-            args.max_cosine_distance, args.nn_budget, display=(not args.dont_display), stock=args.stock, track_class=args.track_class, max_age=args.max_age, min_iou_overlap=args.min_iou_overlap, track_subset_file=args.track_subset_file, use_unmatched=args.use_unmatched, video_output_file=args.video_output_file, use_flow=args.use_flow)
+            args.max_cosine_distance, args.nn_budget, display=(not args.dont_display), stock=args.stock, track_class=args.track_class, max_age=args.max_age, min_iou_overlap=args.min_iou_overlap, track_subset_file=args.track_subset_file, use_unmatched=args.use_unmatched, video_output_file=video_output_file, use_flow=args.use_flow, only_show_one=args.only_show_one)
