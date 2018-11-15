@@ -70,7 +70,8 @@ def gather_sequence_info(sequence_dir, detection_file, track_class=None):
                 # only retain the tracks with thei
                 inds = detections[:,1] == track_class
                 detections = detections[inds, :] # get only the detections which have the target class, which is the second column
-                raise ValueError("track class really shouldn't be set any longer")
+                print("Only using tracks from class {}".format(track_class))
+
 
 
         else:
@@ -239,7 +240,7 @@ def run(sequence_dir, detection_file, output_file, min_confidence,
     else:
         print('initializing a modified tracker')
         # the tracker now has the class as an optional argument
-        tracker = MyTracker(metric, max_age=kwargs['max_age'], max_iou_distance=1.0 - kwargs['min_iou_overlap'], use_flow=kwargs["use_flow"], flow_dir="/home/drussel1/data/ADL/flows") # the IOU is inverted as 1 - IOU in the cost matrix
+        tracker = MyTracker(metric, max_age=kwargs['max_age'], max_iou_distance=1.0 - kwargs['min_iou_overlap'], tracker_type=kwargs["tracker_type"], flow_dir="/home/drussel1/data/ADL/flows") # the IOU is inverted as 1 - IOU in the cost matrix
 
     results = []
 

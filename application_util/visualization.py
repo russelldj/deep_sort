@@ -159,7 +159,10 @@ class Visualization(object):
             if self.index_to_vis not in confirmed_ids and len(confirmed_ids) > 0: # the track must have died
                 self.index_to_vis = random.choice(confirmed_ids)
 
-            track = [t for t in tracks if t.track_id == self.index_to_vis][0] # this is the cleanest way I found to get the item
+            tracks = [t for t in tracks if t.track_id == self.index_to_vis] # this is the cleanest way I found to get the item
+            if len(tracks) == 0: 
+                return
+            track = tracks[0]
 
             self.viewer.color = create_unique_color_uchar(track.track_id)
             if track.time_since_update > 0:

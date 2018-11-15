@@ -1,6 +1,7 @@
 import motmetrics as mm
 from collections import defaultdict, namedtuple
 import numpy as np
+import pandas as pd
 import time
 
 class Scorer(object):

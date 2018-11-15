@@ -17,6 +17,7 @@ import multiprocessing as mp
 import cv2
 import pandas as pd
 import time
+import pdb
 
 class Tracker:
     """
@@ -54,7 +55,7 @@ class Tracker:
     # Then do the death association
     # then the birth
 
-    def __init__(self, metric,  max_iou_distance=0.7, max_age=30, n_init=3, use_flow=False, flow_dir=""): #KEY these are really important parameters 
+    def __init__(self, metric,  max_iou_distance=0.7, max_age=30, n_init=3, tracker_type="deep_sort", flow_dir=""): #KEY these are really important parameters 
         self.metric = metric
         self.max_iou_distance = max_iou_distance
         self.max_age = max_age
@@ -63,9 +64,17 @@ class Tracker:
         self.kf = kalman_filter.KalmanFilter()
         self.tracks = []
         self._next_id = 1
-        self.use_flow = use_flow
+        tracker_names = ["flow_only_tracker", "deep_sort", "flow_tracker", "flow_matcher"];
+        if tracker_type not in tracker_names:
+            raise ValueError("The tracker type was {} when it should have been one of: {}".format(tracker_type, tracker_names))
+        self.flow_tracker_names = tracker_names[1:]
+        self.tracker_type = tracker_type
         self.flow_dir = flow_dir
         self.flow = None
+        # TODO, test the effects of this
+        self.OCCLUDER_STACK = False # use my initial hacky occluder thing
+        self.USE_MODE = False
+
 
     def predict(self): # this doesn't need to be changed at all
         """Propagate track state distributions one time step forward.
@@ -73,10 +82,11 @@ class Tracker:
         This function should be called once every time step, before `update`.
         """
         # this could do the prediction with the flow pretty easily
-        if self.use_flow:
-            raise NotImplementedError()
+        if self.tracker_type == "flow_only_tracker": 
+            for track in self.tracks:
+                track.flow_predict(self.flow)
             #this isn't quite right because there are two flavors of the flow algorithm, the one where flow is used for prediction and the other where it is just for matching
-        else:
+        elif self.tracker_type == "deep_sort" or self.tracker_type=="flow_tracker":
             for track in self.tracks:
                 track.predict(self.kf)
 
@@ -89,10 +99,16 @@ class Tracker:
             A list of detections at the current time step.
 
         """
+
+        # sketch of the algorithms decision tree 
+        # use the cannonical deep sort matching thing to generate matches, unmatched tracks, and unmatched detections
+        # if using my modification, match some more tracks to detections, potentially low-conf ones
+        # if propogatign by flow, do that for all tracks that you don't want to kill
+
         #TODO try to fix the organization of this so it's a bit less heinous
-        #HACK, I'll likely make this load all the time
-        if self.use_flow or True:
-            self.load_frame_flow(kwargs["frame_idx"])
+        # TODO a lot of that could be accomplished by putting some stuff in functions
+
+        self.load_frame_flow(kwargs["frame_idx"])
 
         #Do the matching either with flow or appearance
         matches, unmatched_tracks, unmatched_detections = \
@@ -104,34 +120,34 @@ class Tracker:
             self.tracks[track_idx].update(
                 self.kf, detections[detection_idx])
 
+        #TODO this should really be changed to calling the flow_predict method for each track, and be moved later in the program
         # predict all of the unmatched ones with the flow, if they aren't super new
-        FLOW_VOT = False
-        if FLOW_VOT: 
-            for track_idx in [i for i in unmatched_tracks if not self.tracks[i].is_tentative()]:
-                self.flow_VOT(self.tracks[track_idx])
-            #I need to create a update_with_flow method which takes a track and the uses the flow to update it S
-            #It would be great if it kept it tentative, otherwise the tracks will never die
 
-        for track_idx in [i for i in unmatched_tracks if self.tracks[i].is_tentative()]: # we arent' going to do a search with these ones, I don't think
-            self.tracks[track_idx].mark_missed()
+        # this should also get moved later
        
         USE_LOW_CONF = True
+        assert kwargs["use_unmatched"], "for now, just assume this is thei default"
         if kwargs["use_unmatched"]:
             #unmatched_tracks is really the indices
             if USE_LOW_CONF:
-                unmatched_track_inxs_ = self.retry_detections(unmatched_tracks, [detections[i] for i in unmatched_detections], kwargs["bad_detections"], initialize_new_tracks=True)
+                unmatched_track = self.retry_detections(unmatched_tracks, [detections[i] for i in unmatched_detections], kwargs["bad_detections"], initialize_new_tracks=True)
             else:
-                unmatched_track_inxs_ = self.retry_detections(unmatched_tracks, [detections[i] for i in unmatched_detections], [], initialize_new_tracks=True)
+                unmatched_track = self.retry_detections(unmatched_tracks, [detections[i] for i in unmatched_detections], [], initialize_new_tracks=True)
         else:
-            # if not 
             #TODO loop thorugh all of the bad detections
-            unmatched_track_inxs_ = unmatched_tracks # just a hack
             for ud in [detections[i] for i in unmatched_detections]:
                 self._initiate_track(ud)
 
-        for unmatched_track_inx_ in unmatched_track_inxs_: # these places are where the births and deaths start, but they aren't finalized until later. I need to find that place
-            print("marking new one missed")
-            self.tracks[unmatched_track_inx_].mark_missed()
+        for unmatched_track in unmatched_tracks: # these places are where the births and deaths start, but they aren't finalized until later. I need to find that place
+            
+            #assert not self.tracks[unmatched_track].is_tentative()
+            if unmatched_track == 205:
+                import pdb; pdb.set_trace()
+            if self.tracker_type == "flow_tracker": 
+                # move the track based on the flow
+                self.flow_VOT(self.tracks[unmatched_track])
+            # this ordering is important, you don't want to mark missed first
+            self.tracks[unmatched_track].mark_missed()
         
         # get the deleted tracks
         deleted_tracks = [t for t in self.tracks if t.is_deleted()]
@@ -141,16 +157,17 @@ class Tracker:
         if len(deleted_tracks) > 0:
             for track in self.tracks:
                 print( 'DEATH ID: {}, state: {}, strong: {}, stack: {}'.format(track.track_id, track.state, track.is_strong(), track.occluded_stack))
-
-        for deleted_track in deleted_tracks:
-            # we only want to match with a good track so require_strong is true
-            best_occluder = self.get_max_overlap(deleted_track.to_tlbr(), require_strong=True)
-            num_adds = 0
-            for track in self.tracks:
-                if track.track_id == best_occluder:# there is no other way to index them with the simple list
-                    track.add_occluded(deleted_track.track_id)
-                    assert num_adds == 0 # it shouldn't add the same thing twice
-                    num_adds += 1
+        
+        if self.OCCLUDER_STACK:
+            for deleted_track in deleted_tracks:
+                # we only want to match with a good track so require_strong is true
+                best_occluder = self.get_max_overlap(deleted_track.to_tlbr(), require_strong=True)
+                num_adds = 0
+                for track in self.tracks:
+                    if track.track_id == best_occluder:# there is no other way to index them with the simple list
+                        track.add_occluded(deleted_track.track_id)
+                        assert num_adds == 0 # it shouldn't add the same thing twice
+                        num_adds += 1
 
         # Update distance metric.
         active_targets = [t.track_id for t in self.tracks if t.is_confirmed()]
@@ -195,40 +212,32 @@ class Tracker:
         tracked_region = self.flow[top:bottom, left:right]
         y_size, x_size, _ = tracked_region.shape
         if x_size == 0 or y_size == 0:
-            print("The track had zero width or was out or frame. No prediction")
-            return
-
-        print(tracked_region.shape)
-        USE_MODE = False
-
-        if USE_MODE:
-            x_ave = stats.mode(tracked_region[...,0].astype(int), axis=None).mode[0] * scale_factor
-            y_ave = stats.mode(tracked_region[...,1].astype(int), axis=None).mode[0] * scale_factor
+            print("The track had zero width or was out or frame. it is in ltrb {}".format([left, top, bottom, right]))
         else:
-            x_ave = np.average(tracked_region[...,0]) * scale_factor
-            y_ave = np.average(tracked_region[...,1]) * scale_factor
+            if self.USE_MODE:
+                x_ave = stats.mode(tracked_region[...,0].astype(int), axis=None).mode[0] * scale_factor
+                y_ave = stats.mode(tracked_region[...,1].astype(int), axis=None).mode[0] * scale_factor
+            else:
+                x_ave = np.average(tracked_region[...,0]) * scale_factor
+                y_ave = np.average(tracked_region[...,1]) * scale_factor
 
-        self.x_hist = np.histogram(tracked_region[...,0])
-        self.y_hist = np.histogram(tracked_region[...,1])
+            self.x_hist = np.histogram(tracked_region[...,0])
+            self.y_hist = np.histogram(tracked_region[...,1])
 
-        #todo move this to its own method
+            #x_ceoffs = np.polyfit(np.arange(x_size), tracked_region[int(y_size / 2), :, 0], 1)
+            #y_ceoffs = np.polyfit(np.arange(y_size), tracked_region[:, int(x_size/ 2), 1], 1)
 
-        #x_ceoffs = np.polyfit(np.arange(x_size), tracked_region[int(y_size / 2), :, 0], 1)
-        #y_ceoffs = np.polyfit(np.arange(y_size), tracked_region[:, int(x_size/ 2), 1], 1)
-        print("x_ave: {}, y_ave: {}".format(x_ave, y_ave))
-        #print("xslope: {}, yslope: {}".format(x_ceoffs[0] * x_size, y_ceoffs[0] * y_size))
-
-        #warning this might be weird for python 2
-        left   += x_ave #- x_ceoffs[0] * x_size / 2.0 
-        right  += x_ave #+ x_ceoffs[0] * x_size / 2.0
-        top    += y_ave #- y_ceoffs[0] * y_size / 2.0
-        bottom += y_ave #+ y_ceoffs[0] * y_size / 2.0
+            #warning this might be weird for python 2
+            left   += x_ave #- x_ceoffs[0] * x_size / 2.0 
+            right  += x_ave #+ x_ceoffs[0] * x_size / 2.0
+            top    += y_ave #- y_ceoffs[0] * y_size / 2.0
+            bottom += y_ave #+ y_ceoffs[0] * y_size / 2.0
         # this whole switching thing might be hard with the filter
         tlwh_bbox = tlbr_to_ltwh([top, left, bottom, right])
-        print("original: {}, updated: {}".format(track.to_tlwh(), tlwh_bbox))# there appears to be an issue that the values are getting rounded, but maybe that's ok
         # there should be a set for cropping and another for maintaining accuracy
+        old_tlwh_bbox = tlwh_bbox.copy()
         track.flow_update(self.kf, tlwh_bbox) # this is an issue, I probably need to write another method, because it doesn't make sense to create a detection with some null feature
-        #track.flow_update(self.kf, tlwh_bbox) # this is an issue, I probably need to write another method, because it doesn't make sense to create a detection with some null feature
+        assert track.location.tolist() == old_tlwh_bbox.tolist()
 
 
     def retry_detections(self, unmatched_track_idxs_, initial_unmatched_detections_, otherwise_excluded_detections_, initialize_new_tracks=False): # It makes sense to do it like this because these are the detections which are most likely to be useful, and we shouldn't mix in the subpar ones yet
@@ -306,7 +315,8 @@ class Tracker:
 
 
     def _match(self, detections):
-        if self.use_flow:
+        #pdb.set_trace()
+        if self.tracker_type == "flow_matcher":
             matches, unmatched_tracks, unmatched_detections = \
                 linear_assignment.min_cost_matching(
                     self.flow_metric, self.max_iou_distance,
@@ -343,19 +353,13 @@ class Tracker:
 
     def _initiate_track(self, detection):
         # this is where to search for nearby tracks which are occluding something
-        nearest_occluder = self.get_max_overlap(detection.to_tlbr(), require_occluded=True)
-        for track in self.tracks:
-            print( ' BIRTH ID: {}, state: {}, strong: {}, stack: {}'.format(track.track_id, track.state, track.is_strong(), track.occluded_stack))
         occluded_id = -1
-        for track in self.tracks:
-            if track.track_id == nearest_occluder:
-                #print('about to remove')
-                occluded_id = track.remove_occluded()
-                #input('removed')
 
-        #if nearest_occluder != -1:
-        #    input('the index of self.tracks[{} -1] is {}'.format(nearest_occluder, self.tracks[nearest_occluder - 1].track_id)) # the indices were 1 indexed
-        #print('The nearest occluder to {} is {}'.format(detection.to_tlbr(), nearest_occluder))
+        if self.OCCLUDER_STACK: # Potentially find the ID from a stack of occluded ones
+            nearest_occluder = self.get_max_overlap(detection.to_tlbr(), require_occluded=True)
+            for track in self.tracks:
+                if track.track_id == nearest_occluder:
+                    occluded_id = track.remove_occluded()
 
         # this should be tracker function which takes the self.tracks list and the new birthed one
         mean, covariance = self.kf.initiate(detection.to_xyah())
@@ -445,7 +449,6 @@ class Tracker:
                     # tally which detection each flow pixel lands in
                     num_in_each += self.check_offsets(i_idx, j_idx, flow_pixel, det_offsets)
                     
-            print("track is {} and max x flow is {}".format(track, max_x_flow))
             # there needs to some sort of normalized w.r.t. to the area of the dections and the tracks
             #TODO normalize the values of num_in_each 
             track_size = track[2] * track[3]
