@@ -100,18 +100,16 @@ class Track:
         -------
         ndarray
             The bounding box.
-
         """
-        #HACK, I'm not sure what this should be
+
         if self.time_since_update <= 1:
             ret = self.mean[:4].copy()
             ret[2] *= ret[3]
             ret[:2] -= ret[2:] / 2
             return ret
         else:
-            #input("about to return self.location")
             assert self.location is not None, "time is {}".format(self.time_since_update)
-            return self.location.copy() # which had better be stored in the for ltwh.copy()
+            return self.location.copy() # which had better be stored in the ltwh.copy()
 
     def to_tlbr(self):
         """Get current position in bounding box format `(min x, miny, max x,
@@ -126,8 +124,6 @@ class Track:
         ret = self.to_tlwh()
         ret[2:] = ret[:2] + ret[2:]
         return ret
-
-
 
     def flow_predict(self, flow):
         """propogate the location based on the flow and the past bounding box
@@ -147,17 +143,6 @@ class Track:
         raise NotImplementedError("this is janky")
 
         self.box_predict(flow, self.mean)
-
-
-        #this will just be 
-        #todo likewise, this needs to be updated so there's a version where you simply pass in the flow
-        #and the internal state is directly updataed
-        # the box is going to be represented by ltrb
-        
-        #polygon_bbox =  
-        #x_flow, y_flow, num_flow_points = self.masked_flow(flow, 
-        #self.age += 1
-        #self.time_since_update += 1
 
     def box_predict(self, flow, bbox, scale_factor=1.0):
         def fint(float_):
@@ -225,28 +210,37 @@ class Track:
         self.age += 1
         self.time_since_update += 1
 
-    def flow_update(self, kf, ltwh_bbox):
-        """Perform Kalman filter measurement update step but don't update the feature cache, or status
-
+    def flow_update(self, kf, ltwh_bbox, feature=None, kf_update=True):
+        """The logic here is evolving but the current approach is as follows:
+        If the current feature looks similar, i.e. it is less than max_cosine_distance from a previous feature, perform a REAL update
+        * this means that the time_since_update will be set to zero
+        Else perform a direct update
+        * this will allow the probability mass to spread out and allow detections with other objects
         Parameters
         ----------
         kf : kalman_filter.KalmanFilter
             The Kalman filter.
         ltwh_bbox : ArrayLike
             The predicted location in the form [left, top, width, height]
-
+        feature : ArrayLike
+            This should be a (1, 128) array which represents an embeding of the current flow-predicted location
+        kf_update : Bool
+            this should be true if the new feature looked similar to the gallery
         """
-        self.location = ltwh_bbox.copy()
-        #HACK
-        #self.mean, self.covariance = kf.update(
-        #    self.mean, self.covariance, ltwh_to_xyah(ltwh_bbox))
-        #self.mean[:4] = np.asarray(ltwh_to_xyah(ltwh_bbox))
-        #HACK
-        #self.hits += 1
-        #self.time_since_update = 0
-        #if self.state == TrackState.Tentative and self.hits >= self._n_init:
-        #    self.state = TrackState.Confirmed
-        # end hack
+        # determine how to query the min distance between a feature and the gallery
+        # check that value versus the threshold
+        # if it is less than that, perform a KF update and set the time since matched to zero
+        ## I.E. just call the normal update function
+        # else, perform a direct location update and 
+        if kf_update:
+            self.mean, self.covariance = kf.update(
+                self.mean, self.covariance, ltwh_to_xyah(ltwh_bbox)) #TODO make sure this is the same effoect as self.update
+            self.hits += 1
+            self.time_since_update = 0
+            if self.state == TrackState.Tentative and self.hits >= self._n_init:
+                self.state = TrackState.Confirmed
+        else:
+            self.location = ltwh_bbox.copy()
 
     def update(self, kf, detection):
         """Perform Kalman filter measurement update step and update the feature

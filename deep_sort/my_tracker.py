@@ -7,9 +7,10 @@ from . import iou_matching
 from . import tools
 from .track import Track
 from .detection import Detection
-from .tools import ltwh_to_tlbr, tlbr_to_ltwh
+from .tools import ltwh_to_tlbr, tlbr_to_ltwh, safe_crop_ltbr
+from .images import Images
 from scipy import stats
-
+from . cosine_metric_learning import cosine_inference
 
 import multiprocessing as mp
 #TODO import the cosine extractor
@@ -74,7 +75,9 @@ class Tracker:
         # TODO, test the effects of this
         self.OCCLUDER_STACK = False # use my initial hacky occluder thing
         self.USE_MODE = False
-
+        self.USE_LOW_CONF = True
+        self.embedder = cosine_inference.CosineInference()
+        print(self.embedder.get_features(np.random.random_integers(0, 255, (32,128,128,3))))
 
     def predict(self): # this doesn't need to be changed at all
         """Propagate track state distributions one time step forward.
@@ -90,6 +93,18 @@ class Tracker:
             for track in self.tracks:
                 track.predict(self.kf)
 
+    def compute_descriptor(self, image, x1, y1, x2, y2):
+        assert image is not None
+        assert image.shape[-1] == 3
+        image = tools.safe_crop_ltbr(image, x1, y1, x2, y2) # make it 4d where the first one is the batch size
+        assert image.shape[0] > 0 and image.shape[1] > 0
+        image = cv2.resize(image, (128, 128))
+        image = np.expand_dims(image, 0)
+        start = time.time()
+        feature = self.embedder.get_features(image)
+        print("feature computation took {} seconds".format(time.time() - start))
+        return feature
+
     def update(self, detections, **kwargs): # this is the root of what needs to be changed
         """Perform measurement update and track management.
 
@@ -97,9 +112,10 @@ class Tracker:
         ----------
         detections : List[deep_sort.detection.Detection]
             A list of detections at the current time step.
+        kwargs["image"] : np.ndarray
+            A (h, w, 3) array representing the image at the current timestep
 
         """
-
         # sketch of the algorithms decision tree 
         # use the cannonical deep sort matching thing to generate matches, unmatched tracks, and unmatched detections
         # if using my modification, match some more tracks to detections, potentially low-conf ones
@@ -107,8 +123,14 @@ class Tracker:
 
         #TODO try to fix the organization of this so it's a bit less heinous
         # TODO a lot of that could be accomplished by putting some stuff in functions
+        #TEMP
+        if len(self.metric.samples) > 100:
+            pdb.set_trace()
+        #PMET
 
+        self.image = kwargs["image"]
         self.load_frame_flow(kwargs["frame_idx"])
+        assert self.image is not None
 
         #Do the matching either with flow or appearance
         matches, unmatched_tracks, unmatched_detections = \
@@ -121,31 +143,23 @@ class Tracker:
                 self.kf, detections[detection_idx])
 
         #TODO this should really be changed to calling the flow_predict method for each track, and be moved later in the program
-        # predict all of the unmatched ones with the flow, if they aren't super new
-
-        # this should also get moved later
        
-        USE_LOW_CONF = True
-        assert kwargs["use_unmatched"], "for now, just assume this is thei default"
         if kwargs["use_unmatched"]:
-            #unmatched_tracks is really the indices
-            if USE_LOW_CONF:
+            #unmatched_tracks is really the indices of the same
+            if self.USE_LOW_CONF:
                 unmatched_track = self.retry_detections(unmatched_tracks, [detections[i] for i in unmatched_detections], kwargs["bad_detections"], initialize_new_tracks=True)
             else:
                 unmatched_track = self.retry_detections(unmatched_tracks, [detections[i] for i in unmatched_detections], [], initialize_new_tracks=True)
         else:
-            #TODO loop thorugh all of the bad detections
             for ud in [detections[i] for i in unmatched_detections]:
                 self._initiate_track(ud)
 
         for unmatched_track in unmatched_tracks: # these places are where the births and deaths start, but they aren't finalized until later. I need to find that place
             
             #assert not self.tracks[unmatched_track].is_tentative()
-            if unmatched_track == 205:
-                import pdb; pdb.set_trace()
-            if self.tracker_type == "flow_tracker": 
+            if self.tracker_type == "flow_tracker" and self.tracks[unmatched_track].is_confirmed(): 
                 # move the track based on the flow
-                self.flow_VOT(self.tracks[unmatched_track])
+                self.flow_VOT(self.tracks[unmatched_track], self.image)
             # this ordering is important, you don't want to mark missed first
             self.tracks[unmatched_track].mark_missed()
         
@@ -176,14 +190,14 @@ class Tracker:
             if not track.is_confirmed():
                 continue
             features += track.features
-            targets += [track.track_id for _ in track.features]
-            track.features = []
+            targets += [track.track_id for _ in track.features] # it's a little bit unclear what is going on here
+            track.features = [] # all tracks have their features reset if they are confirmed
         self.metric.partial_fit(
             np.asarray(features), np.asarray(targets), active_targets)
         #this is the end of update
 
     
-    def flow_VOT(self, track, scale_factor=1):
+    def flow_VOT(self, track, image=None, scale_factor=1):
         """
         predicts the movement of a track from the optical flow
         params
@@ -197,48 +211,48 @@ class Tracker:
         #>>> tracker = Tracker("metric")
         """
         assert self.flow is not None, "the flow should have been loaded in update"
-        def fint(float_, axis_num=0):
+        assert self.flow.shape[2] == 2, "the flow should be x, y displacement vectors"
+        assert track.is_confirmed() # this issue might be that unconfirmed tracks are being
+        assert type(scale_factor) == int or type(scale_factor) == float
+
+        def fint(float_, axis_num):
+            # axis num should be 0 if it is y and 1 if it's x 
             fint = int(np.floor(float_))
             return(np.clip(fint, 0, self.flow.shape[axis_num]))
 
-        assert self.flow.shape[2] == 2, "the flow should be x, y displacement vectors"
-
         bbox = ltwh_to_tlbr(track.to_tlwh()) #to_tlwh is a misnomer
-        left   = min(fint(bbox[1]), fint(bbox[3]))  # they can be inverted by the filter
-        top    = min(fint(bbox[0]), fint(bbox[2]))  # they can be inverted by the filter
-        right  = max(fint(bbox[1]), fint(bbox[3]))  # they can be inverted by the filter
-        bottom = max(fint(bbox[0]), fint(bbox[2]))  # they can be inverted by the filter
+        print("bbox is {}".format(bbox))
 
+        left   = min(fint(bbox[1], axis_num=1), fint(bbox[3], axis_num=1))  # they can be inverted by the filter
+        top    = min(fint(bbox[0], axis_num=0), fint(bbox[2], axis_num=0))  # they can be inverted by the filter
+        right  = max(fint(bbox[1], axis_num=1), fint(bbox[3], axis_num=1))  # they can be inverted by the filter
+        bottom = max(fint(bbox[0], axis_num=0), fint(bbox[2], axis_num=0))  # they can be inverted by the filter
+        
+        # the area inside of the last bounding box
         tracked_region = self.flow[top:bottom, left:right]
+       
         y_size, x_size, _ = tracked_region.shape
         if x_size == 0 or y_size == 0:
-            print("The track had zero width or was out or frame. it is in ltrb {}".format([left, top, bottom, right]))
+            print("The track had zero width or was out or frame. it is {} ltwh while the shape was {}".format(bbox, (x_size, y_size)))
+
         else:
-            if self.USE_MODE:
-                x_ave = stats.mode(tracked_region[...,0].astype(int), axis=None).mode[0] * scale_factor
-                y_ave = stats.mode(tracked_region[...,1].astype(int), axis=None).mode[0] * scale_factor
-            else:
-                x_ave = np.average(tracked_region[...,0]) * scale_factor
-                y_ave = np.average(tracked_region[...,1]) * scale_factor
+            x_ave = np.average(tracked_region[...,0]) * scale_factor
+            y_ave = np.average(tracked_region[...,1]) * scale_factor
 
-            self.x_hist = np.histogram(tracked_region[...,0])
-            self.y_hist = np.histogram(tracked_region[...,1])
-
-            #x_ceoffs = np.polyfit(np.arange(x_size), tracked_region[int(y_size / 2), :, 0], 1)
-            #y_ceoffs = np.polyfit(np.arange(y_size), tracked_region[:, int(x_size/ 2), 1], 1)
-
-            #warning this might be weird for python 2
             left   += x_ave #- x_ceoffs[0] * x_size / 2.0 
             right  += x_ave #+ x_ceoffs[0] * x_size / 2.0
             top    += y_ave #- y_ceoffs[0] * y_size / 2.0
             bottom += y_ave #+ y_ceoffs[0] * y_size / 2.0
-        # this whole switching thing might be hard with the filter
-        tlwh_bbox = tlbr_to_ltwh([top, left, bottom, right])
-        # there should be a set for cropping and another for maintaining accuracy
-        old_tlwh_bbox = tlwh_bbox.copy()
-        track.flow_update(self.kf, tlwh_bbox) # this is an issue, I probably need to write another method, because it doesn't make sense to create a detection with some null feature
-        assert track.location.tolist() == old_tlwh_bbox.tolist()
 
+            tlwh_bbox = tlbr_to_ltwh([top, left, bottom, right])
+
+            #NOTE, this needs to be done AFTER updating the bounding box, otherwise it is somewhat nonsensical
+            #TODO, make sure this dist to track thing is corrrect
+            feature = self.compute_descriptor(image, left, top, right, bottom)
+            dist_to_track_features = self.metric.distance_from_track_to_gallery(feature, track.track_id)
+            # there should be a set for cropping and another for maintaining accuracy
+            track.flow_update(self.kf, tlwh_bbox, feature, self.metric.feature_within_max_distance(feature, track.track_id)) # this is an issue, I probably need to write another method, because it doesn't make sense to create a detection with some null feature
+            #assert track.location.tolist() == old_tlwh_bbox.tolist()
 
     def retry_detections(self, unmatched_track_idxs_, initial_unmatched_detections_, otherwise_excluded_detections_, initialize_new_tracks=False): # It makes sense to do it like this because these are the detections which are most likely to be useful, and we shouldn't mix in the subpar ones yet
         # all detections that get passed in should be used 

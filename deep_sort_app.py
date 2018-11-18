@@ -285,6 +285,7 @@ def run(sequence_dir, detection_file, output_file, min_confidence,
         # read the next image because we will actually be using it now
         image = cv2.imread(
             seq_info["image_filenames"][frame_idx], cv2.IMREAD_COLOR)
+        assert image is not None, "the image now needs to be properly read"
         tracker.update(hc_nms_positive_detections, bad_detections=hc_nms_negative_detections+low_confidence_detections, image=image, use_unmatched=kwargs["use_unmatched"], frame_idx=frame_idx)
 
         # Update visualization.

@@ -62,7 +62,6 @@ class FlowTracker(object):
         polygon[...,1] += y_flow * scale_factor
     
     def masked_flow(self, flow, polygon):
-        import pdb; pdb.set_trace()
         print(polygon)
         mask = np.zeros_like(flow[...,0], dtype=np.uint8)
         cv2.fillPoly(mask, polygon.astype(np.int32), 1)

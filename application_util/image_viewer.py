@@ -277,7 +277,6 @@ class ImageViewer(object):
             fps = int(1000. / self._update_ms)
         self._video_writer = cv2.VideoWriter(
             output_filename, fourcc, fps, self._window_shape)
-        import pdb; pdb.set_trace()
         last_slash = output_filename.rfind("/")
         only_one_output_filename = "{}only_one_{}".format(output_filename[:last_slash+1] ,output_filename[last_slash+1:])
         self._only_one_video_writer = cv2.VideoWriter(

@@ -175,3 +175,34 @@ class NearestNeighborDistanceMetric(object):
         for i, target in enumerate(targets):
             cost_matrix[i, :] = self._metric(self.samples[target], features)
         return cost_matrix
+
+    def get_features_for_id(self, ID):
+        assert type(ID) == int, "the ID is assumed to be an int"
+        print("self.samples.keys() is {}".format(self.samples.keys()))
+        # the issue might be that there isn't any G 
+        return self.samples[ID]
+
+    def distance_from_track_to_gallery(self, feature, ID):
+        """ Compute the distance of one feature to the gallery of track `ID`
+
+        Parameters
+        ----------
+        features : np.ndarray 
+            the new features from and image patch
+        ID : int
+            the ID of the track you want to test against
+
+        Returns
+        ---------- 
+        min distance : float
+            The minimum distance between the feature and any of the ones for that track
+        """
+        assert type(ID) == int and type(feature) == np.ndarray
+        track_features = self.get_features_for_id(ID)
+        min_dist = self._metric(track_features, feature) # not necessary to create a new one
+        assert min_dist.shape == (1,), "the shape was {}".format(min_dist.shape)
+        assert type(min_dist[0]) == float or type(min_dist[0]) == np.float32
+        return min_dist[0]
+
+    def feature_within_max_distance(self, feature, ID):
+        return self.distance_from_track_to_gallery(feature, ID) < self.matching_threshold 
