@@ -2,6 +2,7 @@
 from .tools import ltwh_to_xyah, xyah_to_ltwh, ltwh_to_tlbr
 import numpy as np
 from scipy import stats
+import logging
 
 class TrackState:
     """
@@ -74,7 +75,7 @@ class Track:
                  feature=None, is_flow_track=False):
         #TODO determine what the format of this should be i.e., ltrb or ltwh
         self.mean = mean # this is the location if it is a flow track in the format [l,t,r,b]
-        self.location = None #ltwh_to_tlbr(xyah_to_ltwh(mean[:4]))
+        self.location = None #ltwh_to_tlbr(xyah_[:4]))
         self.covariance = covariance
         self.track_id = track_id
         self.hits = 1
@@ -91,6 +92,7 @@ class Track:
 
         self._n_init = n_init
         self._max_age = max_age
+        self.use_location = False
 
     def to_tlwh(self):
         """Get current position in bounding box format `(top left x, top left y,
@@ -102,14 +104,16 @@ class Track:
             The bounding box.
         """
 
-        if self.time_since_update <= 1:
+        logging.warning("self.use_location is {}".format(self.use_location))
+
+        if self.use_location: #
+            assert self.location is not None, "time is {}".format(self.time_since_update)
+            return self.location.copy() # which had better be stored in the ltwh.copy()
+        else:
             ret = self.mean[:4].copy()
             ret[2] *= ret[3]
             ret[:2] -= ret[2:] / 2
             return ret
-        else:
-            assert self.location is not None, "time is {}".format(self.time_since_update)
-            return self.location.copy() # which had better be stored in the ltwh.copy()
 
     def to_tlbr(self):
         """Get current position in bounding box format `(min x, miny, max x,
@@ -140,8 +144,7 @@ class Track:
             return int(np.floor(float_))
 
         assert flow.shape[2] == 2, "the flow should be x, y displacement vectors"
-        raise NotImplementedError("this is janky")
-
+        raise NotImplementedError("this isn't completed")
         self.box_predict(flow, self.mean)
 
     def box_predict(self, flow, bbox, scale_factor=1.0):
@@ -173,7 +176,7 @@ class Track:
         #except ValueError:
         #    #determine something more inteligent to do here
         #    input("The box went out of frame")
-        print("x_ave: {}, y_ave: {}".format(x_ave, y_ave))
+        logging.debug("x_ave: {}, y_ave: {}".format(x_ave, y_ave))
         #print("xslope: {}, yslope: {}".format(x_ceoffs[0] * x_size, y_ceoffs[0] * y_size))
 
         #warning this might be weird for python 2
@@ -210,7 +213,7 @@ class Track:
         self.age += 1
         self.time_since_update += 1
 
-    def flow_update(self, kf, ltwh_bbox, feature=None, kf_update=True):
+    def flow_update(self, kf, ltwh_bbox, feature=None, update_kf=True, update_hit=False):
         """The logic here is evolving but the current approach is as follows:
         If the current feature looks similar, i.e. it is less than max_cosine_distance from a previous feature, perform a REAL update
         * this means that the time_since_update will be set to zero
@@ -232,15 +235,25 @@ class Track:
         # if it is less than that, perform a KF update and set the time since matched to zero
         ## I.E. just call the normal update function
         # else, perform a direct location update and 
-        if kf_update:
+        #TODO add the feature if we care about it
+
+        assert self.is_flow_track, "This isn't set so there will be an issue with to_ltwh"
+        logging.warning("doing a flow update")
+        if update_kf:
             self.mean, self.covariance = kf.update(
                 self.mean, self.covariance, ltwh_to_xyah(ltwh_bbox)) #TODO make sure this is the same effoect as self.update
+            if feature is not None: # this should be sufficiently general, I think this isn't all that important
+                self.features.append(detection.feature)
             self.hits += 1
-            self.time_since_update = 0
+            if update_hit: # if this is set to True, it effectively waits util it leaves the scene
+                self.time_since_update = 0 # now tracks will never die
+
             if self.state == TrackState.Tentative and self.hits >= self._n_init:
                 self.state = TrackState.Confirmed
+            self.use_location = False
         else:
             self.location = ltwh_bbox.copy()
+            self.use_location = True
 
     def update(self, kf, detection):
         """Perform Kalman filter measurement update step and update the feature
@@ -257,7 +270,6 @@ class Track:
         #TODO, make a version of detection which doesn't have the filter and is just a direct update
         # OK, I guess what I meant is make the flow_update function better
         # eventually this will be used with masks so just keep that in mind
-        self
         self.mean, self.covariance = kf.update(
             self.mean, self.covariance, detection.to_xyah())
         self.features.append(detection.feature)
@@ -266,6 +278,7 @@ class Track:
         self.time_since_update = 0
         if self.state == TrackState.Tentative and self.hits >= self._n_init:
             self.state = TrackState.Confirmed
+        self.use_location = False
 
     def mark_missed(self):
         """Mark this track as missed (no association at the current time step).

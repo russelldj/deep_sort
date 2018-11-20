@@ -197,7 +197,6 @@ class FlowTracker(object):
     def add_track(self, image=None):
         if image is None:
             image = self.image
-
         if self.use_polygon:
             print("adding polygon")
             return cv2.polylines(image, self.polygon.astype(np.int32), True,(0,255,0), 5)  
@@ -234,6 +233,16 @@ class FlowTracker(object):
         #print image
         return self.add_track(img)
 
+    def standard_tracking(self):
+        ret, self.image = self.video_reader.read()
+        assert self.image is not None
+        selection = cv2.selectROI(self.image)
+        cv2.destroyAllWindows()
+        while(self.image is not None):
+            ret, self.image = self.video_reader.read()
+            cv2.imshow("frame", self.image)
+            cv2.waitKey(10)
+
 FLOW_DIR = "/home/drussel1/data/ADL/flows"
 VIDEO_FILE = "/home/drussel1/data/ADL/ADL_videos/P_18.MP4"
 
@@ -244,12 +253,14 @@ elif len(sys.argv) > 1:
 else:
     flow_tracker = FlowTracker(VIDEO_FILE, FLOW_DIR)
 
-flow_tracker.pick_location()
-#flow_tracker.set_location_ltrb([594, 336, 676, 508])
-while True:
-    flow_tracker.load_next()
-    flow_tracker.predict()
-    #flow_tracker.show_track()
-    flow_tracker.add_track()
-    #flow_tracker.show_flow()
-    flow_tracker.show_hist_and_image()
+flow_tracker.standard_tracking()
+#
+#flow_tracker.pick_location()
+##flow_tracker.set_location_ltrb([594, 336, 676, 508])
+#while True:
+#    flow_tracker.load_next()
+#    flow_tracker.predict()
+#    #flow_tracker.show_track()
+#    flow_tracker.add_track()
+#    #flow_tracker.show_flow()
+#    flow_tracker.show_hist_and_image()

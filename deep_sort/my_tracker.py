@@ -10,7 +10,6 @@ from .detection import Detection
 from .tools import ltwh_to_tlbr, tlbr_to_ltwh, safe_crop_ltbr
 from .images import Images
 from scipy import stats
-from . cosine_metric_learning import cosine_inference
 
 import multiprocessing as mp
 #TODO import the cosine extractor
@@ -19,6 +18,7 @@ import cv2
 import pandas as pd
 import time
 import pdb
+import logging
 
 class Tracker:
     """
@@ -56,16 +56,18 @@ class Tracker:
     # Then do the death association
     # then the birth
 
-    def __init__(self, metric,  max_iou_distance=0.7, max_age=30, n_init=3, tracker_type="deep_sort", flow_dir=""): #KEY these are really important parameters 
+    def __init__(self, metric,  max_iou_distance=0.7, max_age=30, n_init=3, tracker_type="deep-sort", flow_dir="", update_kf=False, update_hit=False): #KEY these are really important parameters 
         self.metric = metric
         self.max_iou_distance = max_iou_distance
         self.max_age = max_age
         self.n_init = n_init
+        self.update_kf = update_kf
+        self.update_hit = update_hit
 
         self.kf = kalman_filter.KalmanFilter()
         self.tracks = []
         self._next_id = 1
-        tracker_names = ["flow_only_tracker", "deep_sort", "flow_tracker", "flow_matcher"];
+        tracker_names = ["flow-only-tracker", "deep-sort", "flow-tracker", "flow-matcher"];#TODO make some better tracker names
         if tracker_type not in tracker_names:
             raise ValueError("The tracker type was {} when it should have been one of: {}".format(tracker_type, tracker_names))
         self.flow_tracker_names = tracker_names[1:]
@@ -76,8 +78,10 @@ class Tracker:
         self.OCCLUDER_STACK = False # use my initial hacky occluder thing
         self.USE_MODE = False
         self.USE_LOW_CONF = True
-        self.embedder = cosine_inference.CosineInference()
-        print(self.embedder.get_features(np.random.random_integers(0, 255, (32,128,128,3))))
+        if tracker_type == "flow-tracker" and False:
+            from . cosine_metric_learning import cosine_inference
+            self.embedder = cosine_inference.CosineInference()
+        logging.warning("TURNED OFF THE FEATURE COMPUTATION")
 
     def predict(self): # this doesn't need to be changed at all
         """Propagate track state distributions one time step forward.
@@ -85,24 +89,28 @@ class Tracker:
         This function should be called once every time step, before `update`.
         """
         # this could do the prediction with the flow pretty easily
-        if self.tracker_type == "flow_only_tracker": 
+        if self.tracker_type == "flow-only-tracker": 
             for track in self.tracks:
                 track.flow_predict(self.flow)
             #this isn't quite right because there are two flavors of the flow algorithm, the one where flow is used for prediction and the other where it is just for matching
-        elif self.tracker_type == "deep_sort" or self.tracker_type=="flow_tracker":
+        elif self.tracker_type == "deep-sort" or self.tracker_type=="flow-tracker":
             for track in self.tracks:
                 track.predict(self.kf)
+        else:
+            raise ValueError("tracker type wasn't one of the listed types, instead is was '{}'".format(self.tracker_type))
 
     def compute_descriptor(self, image, x1, y1, x2, y2):
         assert image is not None
         assert image.shape[-1] == 3
         image = tools.safe_crop_ltbr(image, x1, y1, x2, y2) # make it 4d where the first one is the batch size
-        assert image.shape[0] > 0 and image.shape[1] > 0
+        if not (image.shape[0] > 0 and image.shape[1] > 0):
+            logging.warning("The image chip had a zero dimension")
+            return 
         image = cv2.resize(image, (128, 128))
         image = np.expand_dims(image, 0)
         start = time.time()
         feature = self.embedder.get_features(image)
-        print("feature computation took {} seconds".format(time.time() - start))
+        logging.warning("feature computation took {} seconds".format(time.time() - start))
         return feature
 
     def update(self, detections, **kwargs): # this is the root of what needs to be changed
@@ -123,10 +131,6 @@ class Tracker:
 
         #TODO try to fix the organization of this so it's a bit less heinous
         # TODO a lot of that could be accomplished by putting some stuff in functions
-        #TEMP
-        if len(self.metric.samples) > 100:
-            pdb.set_trace()
-        #PMET
 
         self.image = kwargs["image"]
         self.load_frame_flow(kwargs["frame_idx"])
@@ -135,7 +139,7 @@ class Tracker:
         #Do the matching either with flow or appearance
         matches, unmatched_tracks, unmatched_detections = \
             self._match(detections)
-        print('matches {}, unmatched_tracks {}, unmatched_detections {}'.format(matches, unmatched_tracks, unmatched_detections))
+        logging.warning('matches {}, unmatched_tracks {}, unmatched_detections {}'.format(matches, unmatched_tracks, unmatched_detections))
         
         # Update track set with the first round of matches
         for track_idx, detection_idx in matches:
@@ -157,7 +161,7 @@ class Tracker:
         for unmatched_track in unmatched_tracks: # these places are where the births and deaths start, but they aren't finalized until later. I need to find that place
             
             #assert not self.tracks[unmatched_track].is_tentative()
-            if self.tracker_type == "flow_tracker" and self.tracks[unmatched_track].is_confirmed(): 
+            if self.tracker_type == "flow-tracker" and self.tracks[unmatched_track].is_confirmed(): 
                 # move the track based on the flow
                 self.flow_VOT(self.tracks[unmatched_track], self.image)
             # this ordering is important, you don't want to mark missed first
@@ -170,7 +174,7 @@ class Tracker:
         # and now do matching
         if len(deleted_tracks) > 0:
             for track in self.tracks:
-                print( 'DEATH ID: {}, state: {}, strong: {}, stack: {}'.format(track.track_id, track.state, track.is_strong(), track.occluded_stack))
+                logging.debug( 'DEATH ID: {}, state: {}, strong: {}, stack: {}'.format(track.track_id, track.state, track.is_strong(), track.occluded_stack))
         
         if self.OCCLUDER_STACK:
             for deleted_track in deleted_tracks:
@@ -215,25 +219,25 @@ class Tracker:
         assert track.is_confirmed() # this issue might be that unconfirmed tracks are being
         assert type(scale_factor) == int or type(scale_factor) == float
 
-        def fint(float_, axis_num):
+        def fint(float_, axis):
             # axis num should be 0 if it is y and 1 if it's x 
             fint = int(np.floor(float_))
-            return(np.clip(fint, 0, self.flow.shape[axis_num]))
+            return(np.clip(fint, 0, self.flow.shape[axis]))
 
         bbox = ltwh_to_tlbr(track.to_tlwh()) #to_tlwh is a misnomer
-        print("bbox is {}".format(bbox))
+        logging.debug("bbox is {}".format(bbox))
 
-        left   = min(fint(bbox[1], axis_num=1), fint(bbox[3], axis_num=1))  # they can be inverted by the filter
-        top    = min(fint(bbox[0], axis_num=0), fint(bbox[2], axis_num=0))  # they can be inverted by the filter
-        right  = max(fint(bbox[1], axis_num=1), fint(bbox[3], axis_num=1))  # they can be inverted by the filter
-        bottom = max(fint(bbox[0], axis_num=0), fint(bbox[2], axis_num=0))  # they can be inverted by the filter
+        left   = min(fint(bbox[1], axis=1), fint(bbox[3], axis=1))  # they can be inverted by the filter
+        top    = min(fint(bbox[0], axis=0), fint(bbox[2], axis=0))  # they can be inverted by the filter
+        right  = max(fint(bbox[1], axis=1), fint(bbox[3], axis=1))  # they can be inverted by the filter
+        bottom = max(fint(bbox[0], axis=0), fint(bbox[2], axis=0))  # they can be inverted by the filter
         
         # the area inside of the last bounding box
         tracked_region = self.flow[top:bottom, left:right]
        
         y_size, x_size, _ = tracked_region.shape
         if x_size == 0 or y_size == 0:
-            print("The track had zero width or was out or frame. it is {} ltwh while the shape was {}".format(bbox, (x_size, y_size)))
+            logging.warning("The track had zero width or was out or frame. it is {} ltwh while the shape was {}".format(bbox, (x_size, y_size)))
 
         else:
             x_ave = np.average(tracked_region[...,0]) * scale_factor
@@ -245,14 +249,29 @@ class Tracker:
             bottom += y_ave #+ y_ceoffs[0] * y_size / 2.0
 
             tlwh_bbox = tlbr_to_ltwh([top, left, bottom, right])
+            
+
+            track.flow_update(self.kf, tlwh_bbox, feature=None, update_kf=self.update_kf, update_hit=self.update_hit) # this is an issue, I probably need to write another method, because it doesn't make sense to create a detection with some null feature
+            return
+
+            assert False, "this shouln't be reached"
+
 
             #NOTE, this needs to be done AFTER updating the bounding box, otherwise it is somewhat nonsensical
             #TODO, make sure this dist to track thing is corrrect
-            feature = self.compute_descriptor(image, left, top, right, bottom)
-            dist_to_track_features = self.metric.distance_from_track_to_gallery(feature, track.track_id)
-            # there should be a set for cropping and another for maintaining accuracy
-            track.flow_update(self.kf, tlwh_bbox, feature, self.metric.feature_within_max_distance(feature, track.track_id)) # this is an issue, I probably need to write another method, because it doesn't make sense to create a detection with some null feature
-            #assert track.location.tolist() == old_tlwh_bbox.tolist()
+            try:
+                feature = self.compute_descriptor(image, left, top, right, bottom)
+            except ValueError:
+                print("value error was thrown")
+                import pdb; pdb.set_trace()
+
+
+            if feature is None: # this means there was an error, like a zero box
+                track.flow_update(self.kf, tlwh_bbox, feature=None, kf_update=False) # this is an issue, I probably need to write another method, because it doesn't make sense to create a detection with some null feature
+            else:
+                dist_to_track_features = self.metric.distance_from_track_to_gallery(feature, track.track_id)
+                # there should be a set for cropping and another for maintaining accuracy
+                track.flow_update(self.kf, tlwh_bbox, feature, self.metric.feature_within_max_distance(feature, track.track_id)) # this is an issue, I probably need to write another method, because it doesn't make sense to create a detection with some null feature
 
     def retry_detections(self, unmatched_track_idxs_, initial_unmatched_detections_, otherwise_excluded_detections_, initialize_new_tracks=False): # It makes sense to do it like this because these are the detections which are most likely to be useful, and we shouldn't mix in the subpar ones yet
         # all detections that get passed in should be used 
@@ -329,8 +348,7 @@ class Tracker:
 
 
     def _match(self, detections):
-        #pdb.set_trace()
-        if self.tracker_type == "flow_matcher":
+        if self.tracker_type == "flow-matcher":
             matches, unmatched_tracks, unmatched_detections = \
                 linear_assignment.min_cost_matching(
                     self.flow_metric, self.max_iou_distance,
@@ -367,25 +385,11 @@ class Tracker:
 
     def _initiate_track(self, detection):
         # this is where to search for nearby tracks which are occluding something
-        occluded_id = -1
-
-        if self.OCCLUDER_STACK: # Potentially find the ID from a stack of occluded ones
-            nearest_occluder = self.get_max_overlap(detection.to_tlbr(), require_occluded=True)
-            for track in self.tracks:
-                if track.track_id == nearest_occluder:
-                    occluded_id = track.remove_occluded()
-
-        # this should be tracker function which takes the self.tracks list and the new birthed one
         mean, covariance = self.kf.initiate(detection.to_xyah())
-        if occluded_id != -1:
-            self.tracks.append(Track(
-                mean, covariance, occluded_id, self.n_init, self.max_age,
-                detection.feature))
-        else: 
-            self.tracks.append(Track(
-                mean, covariance, self._next_id, self.n_init, self.max_age,
-                detection.feature))
-            self._next_id += 1
+        self.tracks.append(Track(
+            mean, covariance, self._next_id, self.n_init, self.max_age,
+            detection.feature, is_flow_track=(self.tracker_type=="flow-tracker")))#TODO, validate and removed hackiness
+        self._next_id += 1
 
     def get_max_overlap(self, occluded_box, require_strong=False, require_occluded=False, distance_threshold=1):
         """ this could be used for other stuff, like births
@@ -413,7 +417,6 @@ class Tracker:
                 # real talk, the two cases are that we required there to be an occluded object and there wasn't one, this is for birth
                 # alternatively, we wanted a track we were confident about and there wasn't one
                 if (require_occluded and not track.has_occluded()) or (require_strong and not track.is_strong()):
-                    print('about to skip one which was not occluding or was not strong')
                     continue # jump to the next itteration of the loop and skip the update
                 if current_overlap > highest_overlap:
                     best_track = track.track_id
@@ -459,14 +462,11 @@ class Tracker:
                 for j_idx in range(jfint(track[2])):
                     flow_pixel = flow[i_idx, j_idx, :]
                     max_x_flow = max(max_x_flow, flow_pixel[0])
-                    #print('flow pixel {}'.format(flow_pixel))
                     # tally which detection each flow pixel lands in
                     num_in_each += self.check_offsets(i_idx, j_idx, flow_pixel, det_offsets)
                     
             # there needs to some sort of normalized w.r.t. to the area of the dections and the tracks
-            #TODO normalize the values of num_in_each 
             track_size = track[2] * track[3]
-            # make this metric as similar to the  standard IOU metric as possible
             # like IOU, this metric should be bounded by [0,1]
             normalization_factor = np.asarray([det_size + track_size - num_in_each[inx] for inx, det_size in enumerate(det_sizes)])
             num_in_each = np.divide(num_in_each, normalization_factor)
@@ -474,87 +474,6 @@ class Tracker:
 
         cost = np.transpose(cost) # IMPORTANT make sure the i axis is the length of the track vector
         return 1 - cost # this is because higher IOU is better but the matching is posed as a cost
-    #def compute_cost(self, flow, track_boxes, det_boxes):
-    #    """
-    #    params
-    #    flow : np.array
-    #        This is the M x N x 2 flow representation, where the first channel is x and the second is y
-    #    track_boxes : List[]
-    #        This should be the filter-predicted location in the format xywh
-    #    det_boxes : List[]
-    #        All the thresholded detections
-    #    returns
-    #    cost : np.array
-    #        This is the pairwise cost function with tracks on the i axis and detections on the j
-    #    #>>> flow = np.zeros((480, 640)) 
-    #    #... track_boxes = [[0,0,100,100], [0, 100, 100, 100], [100, 0, 100, 100]]
-    #    #... det_boxes   = [[200, 0, 100, 100], [0, 0, 100, 100]]
-    #    #... compute_cost(flow, track_boxes, det_boxes)
-    #    #None
-    #    """
-    #    start = time.time()
-    #    cost = np.zeros((len(det_boxes), 0), dtype=int)
-    #    det_sizes = [d[2] * d[3] for d in det_boxes]
-    #    #import pdb; pdb.set_trace()
-    #    def ifint(float_):
-    #        # the kalman filter can predict that the object will move out of frame, so the values need to be clamped to the size the flow (and the iamge)
-    #        return int(np.clip(np.floor(float_), 0, flow.shape[0]-1))
-
-    #    def jfint(float_):
-    #        # the kalman filter can predict that the object will move out of frame, so the values need to be clamped to the size the flow (and the iamge)
-    #        return int(np.clip(np.floor(float_), 0, flow.shape[1]-1))
-    #     
-    #    def compute_overlaps(det_offsets, flow, track, i_idx, output=None):
-    #        num_in_each = np.zeros((len(det_offsets)), dtype=int)
-    #        #row_start = time.time()
-    #        for j_idx in range(jfint(track[2])):
-    #            flow_pixel = flow[i_idx, j_idx, :]
-    #            #print('flow pixel {}'.format(flow_pixel))
-    #            # tally which detection each flow pixel lands in
-    #            #TODO check if this isn't efficient
-    #            num_in_each += self.check_offsets(i_idx, j_idx, flow_pixel, det_offsets)
-    #        if output is not None:
-    #            output.put(num_in_each)
-    #        else:
-    #            return num_in_each
-    #        #print("row took {} seconds".format(time.time() - row_start))
-    #    
-    #    output = []
-    #    for track in track_boxes:
-    #        for i_idx in range(ifint(track[3])):
-    #            det_offsets = self.compute_offsets(track, det_boxes)
-    #            output.append(compute_overlaps(det_offsets, flow, track, i_idx))
-
-
-    #            #output = mp.Queue()
-
-    #            #processes = [mp.Process(target=compute_overlaps, args=(det_offsets, flow, track, i_idx, output)) for i_idx in range(ifint(track[3]))]
-    #            #
-    #            #output_start = time.time()
-    #            ## Run processes
-    #            #for p in processes:
-    #            #    p.start()
-
-    #            ## Exit the completed processes
-    #            #for p in processes:
-    #            #    p.join()
-    #            #output = [output.get() for p in processes]
-    #            #print("computing the output took {} seconds".format(time.time() - output_start))
-    #            num_in_each = sum(output)
-    #            # there needs to some sort of normalized w.r.t. to the area of the dections and the tracks
-    #            #TODO normalize the values of num_in_each 
-    #            track_size = track[2] * track[3]
-    #            # make this metric as similar to the  standard IOU metric as possible
-    #            # like IOU, this metric should be bounded by [0,1]
-
-    #            normalization_factor = np.asarray([det_size + track_size - num_in_each[inx] for inx, det_size in enumerate(det_sizes)])
-    #            num_in_each = np.divide(num_in_each, normalization_factor)
-    #            cost = np.append(cost, np.expand_dims(num_in_each, axis=1), axis=1)
-
-    #    cost = np.transpose(cost) # IMPORTANT make sure the i axis is the length of the track vector
-    #    print("computing the cost took {} seconds".format(time.time() - start))
-    #    return 1 - cost # this is because higher IOU is better but the matching is posed as a cost
-
 
     def check_offsets(self, i_idx, j_idx, flow_pixel, det_offsets):
         """
@@ -577,14 +496,6 @@ class Tracker:
         #check that this is correct, the y might be first
         x_offset = j_idx + flow_pixel[0]
         y_offset = i_idx + flow_pixel[1]
-        #matches = []
-        #for det_offset in det_offsets:
-        #    if x_offset >= det_offset[0] and x_offset <= det_offset[2] and \
-        #        y_offset >= det_offset[1] and y_offset <= det_offset[3]:
-        #        matches.append(True)
-        #    else:
-        #        #print("x_offset: {}, y_offset: {}".format(x_offset, y_offset))
-        #        matches.append(False)
 
         matches = [True if x_offset >= det_offset[0] and x_offset <= det_offset[2] and y_offset >= det_offset[1] and y_offset <= det_offset[3] else False for det_offset in det_offsets]
         return np.array(matches, dtype=int)

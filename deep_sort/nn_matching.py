@@ -1,5 +1,6 @@
 # vim: expandtab:ts=4:sw=4
 import numpy as np
+import logging
 
 
 def _pdist(a, b):
@@ -178,7 +179,7 @@ class NearestNeighborDistanceMetric(object):
 
     def get_features_for_id(self, ID):
         assert type(ID) == int, "the ID is assumed to be an int"
-        print("self.samples.keys() is {}".format(self.samples.keys()))
+        logging.debug("self.samples.keys() is {}".format(self.samples.keys()))
         # the issue might be that there isn't any G 
         return self.samples[ID]
 

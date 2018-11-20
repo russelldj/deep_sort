@@ -1,5 +1,4 @@
 from __future__ import division, print_function, absolute_import
-
 import argparse
 import os
 
@@ -17,6 +16,9 @@ from deep_sort.my_tracker import Tracker as MyTracker # make sure to avoid the n
 from deep_sort.flow_tracker import FlowTracker
 from deep_sort.scorer import Scorer
 import pandas as pd
+import pdb
+import re
+import logging
 
 
 def gather_sequence_info(sequence_dir, detection_file, track_class=None):
@@ -240,10 +242,9 @@ def run(sequence_dir, detection_file, output_file, min_confidence,
     else:
         print('initializing a modified tracker')
         # the tracker now has the class as an optional argument
-        tracker = MyTracker(metric, max_age=kwargs['max_age'], max_iou_distance=1.0 - kwargs['min_iou_overlap'], tracker_type=kwargs["tracker_type"], flow_dir="/home/drussel1/data/ADL/flows") # the IOU is inverted as 1 - IOU in the cost matrix
+        tracker = MyTracker(metric, max_age=kwargs['max_age'], max_iou_distance=1.0 - kwargs['min_iou_overlap'], tracker_type=kwargs["tracker_type"], flow_dir=kwargs["flow_dir"], update_kf=kwargs["update_kf"], update_hit=kwargs["update_hit"]) # the IOU is inverted as 1 - IOU in the cost matrix
 
     results = []
-
     if kwargs["track_subset_file"] is not None:
         good_frames = np.loadtxt(kwargs["track_subset_file"])
     else: 
@@ -324,14 +325,24 @@ def run(sequence_dir, detection_file, output_file, min_confidence,
     if seq_info['groundtruth'] is not None:
         scorer = Scorer()
         # I think the groundtruths might be off by a factor of 2
-        scores = scorer.score_lists(results, seq_info['groundtruth'])
+        scores = scorer.score_lists(results, seq_info['groundtruth'], good_frames)
         assert type(scores) ==  pd.DataFrame, "The results are supposed to be a dataframe"
         last_slash_idx = output_file.rfind("/")
         scores_output_file = "{}scores{}".format(output_file[:last_slash_idx + 1], output_file[last_slash_idx + 1:])
+        argv_output_file = "{}argv{}".format(output_file[:last_slash_idx + 1], output_file[last_slash_idx + 1:])
         # write the scores to a (very short) file
+        current_name = scores.index[0]
+        argv = re.sub("[',]", "", str(kwargs["argv"]))
+        scores = scores.rename({current_name : argv})
         scores.to_csv(scores_output_file)
+        with open(argv_output_file, 'w') as outfile:
+            outfile.write(str(kwargs["argv"]))
     else:
         print("There are no groundtruths so no scoring can be done")
+        last_slash_idx = output_file.rfind("/")
+        argv_output_file = "{}argv{}".format(output_file[:last_slash_idx + 1], output_file[last_slash_idx + 1:])
+        with open(argv_output_file, 'w') as outfile:
+            outfile.write(str(kwargs["argv"]))
 
 
 

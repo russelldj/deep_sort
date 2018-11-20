@@ -34,11 +34,12 @@ class Scorer(object):
         # For now, I think we can ignore the cases where there a frames which should be groundtruths but doesn't have annotations, though if they appear to all be on multiples of 30, then I'll reconsider
         print("Began computing scores")
         gt_frames = groundtruths[:, 0]
-
+        
         if frame_subset is not None:
             gt_frames = [gtf for gtf in gt_frames if gtf in frame_subset]
 
         tracks = [track for track in tracks if track[0] in gt_frames]
+        groundtruths = [gt for gt in groundtruths if gt[0] in gt_frames] 
       
         # perhaps poorly-named but I couldn't think of anything better
         # frame is somewhat reduntant here
@@ -57,6 +58,10 @@ class Scorer(object):
             gt_frame = TrackFrame(frame=gt[0], ID=gt[1], bbox=gt[2:6])
             gts_dict[gt_frame.frame].append(gt_frame)
         
+        if len(tracks_dict) == 0 or len(gts_dict) == 0:
+            print("One of the datasets had zero length, tracks was {} long and gts was {} long".format(len(tracks_dict), len(gts_dict)))
+            return pd.DataFrame(data={"Zero length" : [0]})
+
         print("Cleaned the data")
 
         for frame in gt_frames:

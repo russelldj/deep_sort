@@ -1,8 +1,22 @@
 import numpy as np
 def safe_crop_ltbr(image, x1, y1, x2, y2):
-    assert image is not None
-    assert x1 <= x2 and y1 <= y2
-    return image[int(y1):int(y2), int(x1):int(x2)].copy()
+    """
+    Returns a crop of an image based on the image and an [left, top, right, bottom] bounding box
+    >>> safe_crop_ltbr(np.zeros((720, 1080, 3)), 0, 10, 100, 200).shape
+    (190, 100, 3)
+    >>> safe_crop_ltbr(np.zeros((720, 1080, 3)), 100, 100, 20, 200)
+    Traceback (most recent call last):
+    ValueError: {x,y}1 should be less than {x,y}2
+    """
+    if image is None or len(image.shape) != 3:
+        raise ValueError("Image should be a 3d array")
+    if x1 >= x2 or y1 >= y2:
+        raise ValueError("{x,y}1 should be less than {x,y}2")
+    x1 = int(np.clip(x1, 0, image.shape[1]))
+    x2 = int(np.clip(x2, 0, image.shape[1]))
+    y1 = int(np.clip(y1, 0, image.shape[0]))
+    y2 = int(np.clip(y2, 0, image.shape[0]))
+    return image[y1:y2, x1:x2].copy()
 
 def ltwh_to_tlbr(bbox): # these boxes are really ltwh
     left, top = bbox[:2]
@@ -38,7 +52,6 @@ def ltwh_to_xyah(ltwh_bbox):
     bbox[0] += ltwh_bbox[2] / 2
     bbox[1] += ltwh_bbox[3] / 2
     bbox[2] /= ltwh_bbox[3]
-    print("tlwh: {}, xyah: {}".format(ltwh_bbox, bbox))
     return bbox
 
 def xyah_to_ltwh(xyah_bbox):
@@ -54,7 +67,6 @@ def xyah_to_ltwh(xyah_bbox):
     bbox[2] = xyah_bbox[2] * xyah_bbox[3] # height * width / height
     bbox[0] -= bbox[2] / 2
     bbox[1] -= bbox[3] / 2
-    print("xyah: {}, tlwh: {}".format(xyah_bbox, bbox))
     return bbox
 
 def debug_signal_handler(signal, frame):
