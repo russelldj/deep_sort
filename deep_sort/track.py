@@ -213,6 +213,7 @@ class Track:
         self.age += 1
         self.time_since_update += 1
 
+
     def flow_update(self, kf, ltwh_bbox, feature=None, update_kf=True, update_hit=False):
         """The logic here is evolving but the current approach is as follows:
         If the current feature looks similar, i.e. it is less than max_cosine_distance from a previous feature, perform a REAL update
@@ -242,11 +243,13 @@ class Track:
         if update_kf:
             self.mean, self.covariance = kf.update(
                 self.mean, self.covariance, ltwh_to_xyah(ltwh_bbox)) #TODO make sure this is the same effoect as self.update
-            if feature is not None: # this should be sufficiently general, I think this isn't all that important
-                self.features.append(detection.feature)
-            self.hits += 1
+            if feature is not None: # this should be sufficiently general, I think this isn't all that important whether there's a new feature
+                # I take that back, it matters a lot
+                assert feature[0].shape == (128,)
+                self.features.append(feature[0])
             if update_hit: # if this is set to True, it effectively waits util it leaves the scene
                 self.time_since_update = 0 # now tracks will never die
+                self.hits += 1
 
             if self.state == TrackState.Tentative and self.hits >= self._n_init:
                 self.state = TrackState.Confirmed
@@ -272,6 +275,7 @@ class Track:
         # eventually this will be used with masks so just keep that in mind
         self.mean, self.covariance = kf.update(
             self.mean, self.covariance, detection.to_xyah())
+        assert detection.feature.shape == (128,)
         self.features.append(detection.feature)
 
         self.hits += 1

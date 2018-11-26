@@ -20,7 +20,6 @@ import pdb
 import re
 import logging
 
-
 def gather_sequence_info(sequence_dir, detection_file, track_class=None):
     """Gather sequence information, such as image filenames, detections,
     groundtruth (if available).
@@ -287,17 +286,19 @@ def run(sequence_dir, detection_file, output_file, min_confidence,
         image = cv2.imread(
             seq_info["image_filenames"][frame_idx], cv2.IMREAD_COLOR)
         assert image is not None, "the image now needs to be properly read"
-        tracker.update(hc_nms_positive_detections, bad_detections=hc_nms_negative_detections+low_confidence_detections, image=image, use_unmatched=kwargs["use_unmatched"], frame_idx=frame_idx)
+        if stock:
+            tracker.update(hc_nms_positive_detections)
+        else:
+            tracker.update(hc_nms_positive_detections, bad_detections=hc_nms_negative_detections+low_confidence_detections, image=image, use_unmatched=kwargs["use_unmatched"], frame_idx=frame_idx)
 
         # Update visualization.
         if display:
             vis.set_image(image.copy())
             if seq_info['groundtruth'] is not None:
-                #def create_groundtruth(groundtruth_mat, frame_idx, min_height=0):
                 vis.draw_groundtruth(*create_groundtruth(seq_info['groundtruth'], frame_idx))
             #HACK for showing detections
             #vis.draw_detections(hc_nms_positive_detections)
-            vis.draw_trackers(tracker.tracks)
+            vis.draw_trackers(tracker.tracks, create_groundtruth(seq_info['groundtruth'], frame_idx)) # clean up the double use of create_groundtruht
 
         # Store results.
         for track in tracker.tracks:
@@ -310,7 +311,7 @@ def run(sequence_dir, detection_file, output_file, min_confidence,
 
     # Run tracker.
     if display:
-        visualizer = visualization.Visualization(seq_info, update_ms=5, video_output_file=kwargs["video_output_file"], only_show_one=kwargs["only_show_one"])
+        visualizer = visualization.Visualization(seq_info, update_ms=5, video_output_file=kwargs["video_output_file"], vis_method=kwargs["vis_method"])
     else:
         visualizer = visualization.NoVisualization(seq_info)
     visualizer.run(frame_callback, good_frames)

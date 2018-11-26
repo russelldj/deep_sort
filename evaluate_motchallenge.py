@@ -51,7 +51,7 @@ def parse_args():
     parser.add_argument("--dont-display", help="use the visualization", action="store_true", default=False)
     parser.add_argument("--dont-use-unmatched", help="don't use unmatched, low-confidence, and NMS-suppressed detections", action="store_false", default=True) # This is really use-unmatched
     parser.add_argument("--tracker-type", help="which tracker to use, currently 'deep-sort', 'flow-matcher', 'flow-tracker'", type=str, default="deep-sort")
-    parser.add_argument("--only-show-one", help="Only show one track at a time", action="store_true", default=False)
+    parser.add_argument("--vis-method", help="pick how to visualize the resultant tracks: `show-all`, `one-track`, `one-gt'", type=str, default="one-track")
     parser.add_argument("--flow-dir", help="Where the flows are located", type=str, default="--flow dir should have been set")
     parser.add_argument("--update-kf", help="update the kalman filter to keep the probablilty mass small", action="store_true", default=False)
     parser.add_argument("--update-hit", help="update hit so tracks don't die until they leave the scence", action="store_true", default=False)
@@ -73,4 +73,4 @@ if __name__ == "__main__":
         deep_sort_app.run(
             sequence_dir, detection_file, output_file, args.min_confidence,
             args.nms_max_overlap, args.min_detection_height,
-            args.max_cosine_distance, args.nn_budget, display=(not args.dont_display), stock=args.stock, track_class=args.track_class, max_age=args.max_age, min_iou_overlap=args.min_iou_overlap, track_subset_file=args.track_subset_file, use_unmatched=args.dont_use_unmatched, video_output_file=video_output_file, tracker_type=args.tracker_type, only_show_one=args.only_show_one, argv=sys.argv, flow_dir=args.flow_dir, update_hit=args.update_hit, update_kf=args.update_kf)
+            args.max_cosine_distance, args.nn_budget, display=(not args.dont_display), stock=args.stock, track_class=args.track_class, max_age=args.max_age, min_iou_overlap=args.min_iou_overlap, track_subset_file=args.track_subset_file, use_unmatched=args.dont_use_unmatched, video_output_file=video_output_file, tracker_type=args.tracker_type, vis_method=args.vis_method, argv=sys.argv, flow_dir=args.flow_dir, update_hit=args.update_hit, update_kf=args.update_kf)

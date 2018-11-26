@@ -78,10 +78,9 @@ class Tracker:
         self.OCCLUDER_STACK = False # use my initial hacky occluder thing
         self.USE_MODE = False
         self.USE_LOW_CONF = True
-        if tracker_type == "flow-tracker" and False:
+        if tracker_type == "flow-tracker":
             from . cosine_metric_learning import cosine_inference
             self.embedder = cosine_inference.CosineInference()
-        logging.warning("TURNED OFF THE FEATURE COMPUTATION")
 
     def predict(self): # this doesn't need to be changed at all
         """Propagate track state distributions one time step forward.
@@ -165,7 +164,7 @@ class Tracker:
                 # move the track based on the flow
                 self.flow_VOT(self.tracks[unmatched_track], self.image)
             # this ordering is important, you don't want to mark missed first
-            self.tracks[unmatched_track].mark_missed()
+            self.tracks[unmatched_track].mark_missed() # this just handles deletions
         
         # get the deleted tracks
         deleted_tracks = [t for t in self.tracks if t.is_deleted()]
@@ -218,6 +217,7 @@ class Tracker:
         assert self.flow.shape[2] == 2, "the flow should be x, y displacement vectors"
         assert track.is_confirmed() # this issue might be that unconfirmed tracks are being
         assert type(scale_factor) == int or type(scale_factor) == float
+        assert scale_factor == 1
 
         def fint(float_, axis):
             # axis num should be 0 if it is y and 1 if it's x 
@@ -251,10 +251,10 @@ class Tracker:
             tlwh_bbox = tlbr_to_ltwh([top, left, bottom, right])
             
 
-            track.flow_update(self.kf, tlwh_bbox, feature=None, update_kf=self.update_kf, update_hit=self.update_hit) # this is an issue, I probably need to write another method, because it doesn't make sense to create a detection with some null feature
-            return
+            #track.flow_update(self.kf, tlwh_bbox, feature=None, update_kf=self.update_kf, update_hit=self.update_hit) # this is an issue, I probably need to write another method, because it doesn't make sense to create a detection with some null feature
+            #return
 
-            assert False, "this shouln't be reached"
+            #assert False, "this shouln't be reached"
 
 
             #NOTE, this needs to be done AFTER updating the bounding box, otherwise it is somewhat nonsensical
@@ -265,13 +265,15 @@ class Tracker:
                 print("value error was thrown")
                 import pdb; pdb.set_trace()
 
+            logging.warning("the update_kf and update_hit flags no longer do anything")
 
             if feature is None: # this means there was an error, like a zero box
-                track.flow_update(self.kf, tlwh_bbox, feature=None, kf_update=False) # this is an issue, I probably need to write another method, because it doesn't make sense to create a detection with some null feature
+                track.flow_update(self.kf, tlwh_bbox, feature=None, update_kf=False, update_hit=False) # this is an issue, I probably need to write another method, because it doesn't make sense to create a detection with some null feature
             else:
                 dist_to_track_features = self.metric.distance_from_track_to_gallery(feature, track.track_id)
                 # there should be a set for cropping and another for maintaining accuracy
-                track.flow_update(self.kf, tlwh_bbox, feature, self.metric.feature_within_max_distance(feature, track.track_id)) # this is an issue, I probably need to write another method, because it doesn't make sense to create a detection with some null feature
+                matched_gallery = self.metric.feature_within_max_distance(feature, track.track_id)
+                track.flow_update(self.kf, tlwh_bbox, feature, update_kf=matched_gallery, update_hit=matched_gallery) # this is an issue, I probably need to write another method, because it doesn't make sense to create a detection with some null feature
 
     def retry_detections(self, unmatched_track_idxs_, initial_unmatched_detections_, otherwise_excluded_detections_, initialize_new_tracks=False): # It makes sense to do it like this because these are the detections which are most likely to be useful, and we shouldn't mix in the subpar ones yet
         # all detections that get passed in should be used 
