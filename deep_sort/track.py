@@ -275,7 +275,7 @@ class Track:
         # eventually this will be used with masks so just keep that in mind
         self.mean, self.covariance = kf.update(
             self.mean, self.covariance, detection.to_xyah())
-        assert detection.feature.shape == (128,)
+        #assert detection.feature.shape == (128,)
         self.features.append(detection.feature)
 
         self.hits += 1
