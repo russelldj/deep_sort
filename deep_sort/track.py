@@ -71,11 +71,13 @@ class Track:
 
     """
 
-    def __init__(self, mean, covariance, track_id, n_init, max_age,
+    def __init__(self, mean, covariance, track_id, n_init, max_age, mask,
                  feature=None, is_flow_track=False):
         #TODO determine what the format of this should be i.e., ltrb or ltwh
         self.mean = mean # this is the location if it is a flow track in the format [l,t,r,b]
         self.location = None #ltwh_to_tlbr(xyah_[:4]))
+        assert type(mask) == list
+        self.mask = mask # a null mask
         self.covariance = covariance
         self.track_id = track_id
         self.hits = 1
@@ -240,6 +242,7 @@ class Track:
 
         assert self.is_flow_track, "This isn't set so there will be an issue with to_ltwh"
         logging.warning("doing a flow update")
+        # the mask should stay the same here, or be shifted by the flow
         if update_kf:
             self.mean, self.covariance = kf.update(
                 self.mean, self.covariance, ltwh_to_xyah(ltwh_bbox)) #TODO make sure this is the same effoect as self.update
@@ -277,6 +280,7 @@ class Track:
             self.mean, self.covariance, detection.to_xyah())
         #assert detection.feature.shape == (128,)
         self.features.append(detection.feature)
+        self.mask = detection.mask
 
         self.hits += 1
         self.time_since_update = 0

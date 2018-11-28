@@ -366,7 +366,8 @@ def run(sequence_dir, detection_file, output_file, min_confidence,
         # hc = high_conf
         hc_boxes = np.array([d.tlwh for d in high_confidence_detections])
         hc_scores = np.array([d.confidence for d in high_confidence_detections])
-
+        
+        #TODO try to do mask NMS
         indices = preprocessing.non_max_suppression(
             hc_boxes, nms_max_overlap, hc_scores)
 

@@ -5,7 +5,6 @@ import sys
 import deep_sort_app
 from deep_sort import tools
 
-
 def parse_args():
     """ Parse command line arguments.
     """

@@ -9,11 +9,11 @@ from .track import Track
 from .detection import Detection
 from .tools import ltwh_to_tlbr, tlbr_to_ltwh, safe_crop_ltbr
 from .images import Images
+
+from deep_sort.pycocotools import mask as MaskUtil # try to avoid colisions
+
 from scipy import stats
-
 import multiprocessing as mp
-#TODO import the cosine extractor
-
 import cv2
 import pandas as pd
 import time
@@ -92,7 +92,7 @@ class Tracker:
             for track in self.tracks:
                 track.flow_predict(self.flow)
             #this isn't quite right because there are two flavors of the flow algorithm, the one where flow is used for prediction and the other where it is just for matching
-        elif self.tracker_type == "deep-sort" or self.tracker_type=="flow-tracker":
+        elif self.tracker_type in ["deep-sort", "flow-tracker", "mask-matcher"]: 
             for track in self.tracks:
                 track.predict(self.kf)
         else:
@@ -130,7 +130,6 @@ class Tracker:
 
         #TODO try to fix the organization of this so it's a bit less heinous
         # TODO a lot of that could be accomplished by putting some stuff in functions
-
         self.image = kwargs["image"]
         self.load_frame_flow(kwargs["frame_idx"])
         assert self.image is not None
@@ -251,31 +250,31 @@ class Tracker:
             tlwh_bbox = tlbr_to_ltwh([top, left, bottom, right])
             
 
-            #track.flow_update(self.kf, tlwh_bbox, feature=None, update_kf=self.update_kf, update_hit=self.update_hit) # this is an issue, I probably need to write another method, because it doesn't make sense to create a detection with some null feature
+            #track.flow_update(self.kf, tlwh_bbox, feature=none, update_kf=self.update_kf, update_hit=self.update_hit) # this is an issue, i probably need to write another method, because it doesn't make sense to create a detection with some null feature
             #return
 
-            #assert False, "this shouln't be reached"
+            #assert false, "this shouln't be reached"
 
 
-            #NOTE, this needs to be done AFTER updating the bounding box, otherwise it is somewhat nonsensical
-            #TODO, make sure this dist to track thing is corrrect
+            #note, this needs to be done after updating the bounding box, otherwise it is somewhat nonsensical
+            #todo, make sure this dist to track thing is corrrect
             try:
                 feature = self.compute_descriptor(image, left, top, right, bottom)
-            except ValueError:
+            except valueerror:
                 print("value error was thrown")
                 import pdb; pdb.set_trace()
 
             logging.warning("the update_kf and update_hit flags no longer do anything")
 
             if feature is None: # this means there was an error, like a zero box
-                track.flow_update(self.kf, tlwh_bbox, feature=None, update_kf=False, update_hit=False) # this is an issue, I probably need to write another method, because it doesn't make sense to create a detection with some null feature
+                track.flow_update(self.kf, tlwh_bbox, feature=None, update_kf=False, update_hit=False) # this is an issue, i probably need to write another method, because it doesn't make sense to create a detection with some null feature
             else:
                 dist_to_track_features = self.metric.distance_from_track_to_gallery(feature, track.track_id)
                 # there should be a set for cropping and another for maintaining accuracy
                 matched_gallery = self.metric.feature_within_max_distance(feature, track.track_id)
-                track.flow_update(self.kf, tlwh_bbox, feature, update_kf=matched_gallery, update_hit=matched_gallery) # this is an issue, I probably need to write another method, because it doesn't make sense to create a detection with some null feature
+                track.flow_update(self.kf, tlwh_bbox, feature, update_kf=matched_gallery, update_hit=matched_gallery) # this is an issue, i probably need to write another method, because it doesn't make sense to create a detection with some null feature
 
-    def retry_detections(self, unmatched_track_idxs_, initial_unmatched_detections_, otherwise_excluded_detections_, initialize_new_tracks=False): # It makes sense to do it like this because these are the detections which are most likely to be useful, and we shouldn't mix in the subpar ones yet
+    def retry_detections(self, unmatched_track_idxs_, initial_unmatched_detections_, otherwise_excluded_detections_, initialize_new_tracks=False): # it makes sense to do it like this because these are the detections which are most likely to be useful, and we shouldn't mix in the subpar ones yet
         # all detections that get passed in should be used 
         # all tracks which are confirmed should be used
         # at the end it needs to return matches, unmatched tracks, and unmatched detections
@@ -286,11 +285,11 @@ class Tracker:
         # do some hacking to deal with the two sorts of detections
         unmatched_detections_ = [] 
         for unmatched_detection in initial_unmatched_detections_:
-            unmatched_detection.was_NMS_suppressed = False # this is only for the bad ones suppressed by NMS or confidence
+            unmatched_detection.was_nms_suppressed = False # this is only for the bad ones suppressed by nms or confidence
             unmatched_detections_.append(unmatched_detection)
 
         for suppressed_detection in otherwise_excluded_detections_:
-            suppressed_detection.was_NMS_suppressed = True # this is the other alternative
+            suppressed_detection.was_nms_suppressed = True # this is the other alternative
             unmatched_detections_.append(suppressed_detection)
             
         detections_ = sorted(unmatched_detections_, key=get_conf)
@@ -309,25 +308,25 @@ class Tracker:
                                 confirmed_unmatched_tracks_, [ud]) # this can't be easily cached as unmatched tracks keeps getting shorter
             assert len(matches) <= 1, "there is only one detection, so there shouldn't be more than one match"
             if len(matches) == 1:
-                TRACK_LOCATION = 0
-                ONLY_MATCH = 0
-                confirmed_unmatched_tracks_[matches[ONLY_MATCH][TRACK_LOCATION]].update(self.kf, ud) # update the relavanent track
-                # HACK
+                track_location = 0
+                only_match = 0
+                confirmed_unmatched_tracks_[matches[only_match][track_location]].update(self.kf, ud) # update the relavanent track
+                # hack
             elif initialize_new_tracks:
                 #mark that this detection was missed
                 final_unmatched_detections_.append(ud)
                 
             confirmed_unmatched_tracks_ = [confirmed_unmatched_tracks_[i] for i, _ in enumerate(confirmed_unmatched_tracks_) if i not in new_unmatched_tracks] # this array will get returned
-            BREAK_EARLY = False # it appears that this is a bad idea
-            assert not BREAK_EARLY, "just for now, I don't want this on"
-            if BREAK_EARLY:
+            break_early = False # it appears that this is a bad idea
+            assert not break_early, "just for now, i don't want this on"
+            if break_early:
                 if len(confirmed_unmatched_tracks_) == 0:
                     break # we are done, though maybe all of the detections should actually be matched confirmed_unmatched_track_inxs_ = [self.tracks.index(c_u_t) for c_u_t in confirmed_unmatched_tracks_]
-        non_NMS_final_unmatched_detections = [ud for ud in final_unmatched_detections_ if not ud.was_NMS_suppressed]
-        for ud in non_NMS_final_unmatched_detections:
+        non_nms_final_unmatched_detections = [ud for ud in final_unmatched_detections_ if not ud.was_nms_suppressed]
+        for ud in non_nms_final_unmatched_detections:
             self._initiate_track(ud)
 
-        #input("non_NMS_final_unmatched_detections {}\n, initial_unmatched_detections_ {}\n bad_detections {}".format(non_NMS_final_unmatched_detections, initial_unmatched_detections_,otherwise_excluded_detections_))
+        #input("non_nms_final_unmatched_detections {}\n, initial_unmatched_detections_ {}\n bad_detections {}".format(non_nms_final_unmatched_detections, initial_unmatched_detections_,otherwise_excluded_detections_))
         return confirmed_unmatched_track_inxs_
 
     def gated_metric(self, tracks, dets, track_indices, detection_indices):
@@ -348,12 +347,49 @@ class Tracker:
         cost = self.compute_cost(self.flow, targets, dets)
         return cost
 
+    def mask_metric(self, tracks, dets, track_indices, detection_indices):
+        """
+        params
+        ----------  
+        tracks : list[deep_sort.tracks]
+           the tracks active in the last frame 
+        dets : list[deep_sort.detections]
+           thresholded detections
+
+        returns
+        ---------- 
+        cost : np.array
+            this is the pairwise cost function with tracks on the i axis and detections on the j
+        """
+        pred_masks = [self.boundary_to_RLE(d.mask) for d in dets] # the zero is just to clear the singleton array
+        gt_masks   = [self.boundary_to_RLE(t.mask) for t in tracks]
+        IOU = MaskUtil.iou(pred_masks, gt_masks, np.zeros((len(gt_masks))))
+        IOU = IOU.transpose()
+        if not IOU.shape == (len(tracks), len(dets)):
+            pdb.set_trace()
+        print("Mask IOU is {}".format(IOU))
+        return IOU
+
+    def boundary_to_RLE(self, contours):
+        mask = cv2.fillPoly(np.zeros(self.image.shape[:2]), pts=[np.asarray(c) for c in contours], color=(255,255,255))
+        mask = np.asfortranarray(mask).astype(np.uint8)  # needed for the encoding step
+        cv2.imwrite("test.png", mask)
+        mask = MaskUtil.encode(mask)
+        return mask
+
 
     def _match(self, detections):
-        if self.tracker_type == "flow-matcher":
+        logging.warning("Hacky behavior")
+        if self.tracker_type == "flow-matcher" and False:
             matches, unmatched_tracks, unmatched_detections = \
                 linear_assignment.min_cost_matching(
                     self.flow_metric, self.max_iou_distance,
+                    self.tracks, detections)
+        elif self.tracker_type == "mask-matcher" or True:
+            logging.warning("HACK: always entring here")
+            matches, unmatched_tracks, unmatched_detections = \
+                linear_assignment.min_cost_matching(
+                    self.mask_metric, self.max_iou_distance,
                     self.tracks, detections)
 
         else:  # use the normal appearance features approach
@@ -389,7 +425,7 @@ class Tracker:
         # this is where to search for nearby tracks which are occluding something
         mean, covariance = self.kf.initiate(detection.to_xyah())
         self.tracks.append(Track(
-            mean, covariance, self._next_id, self.n_init, self.max_age,
+            mean, covariance, self._next_id, self.n_init, self.max_age, detection.mask,
             detection.feature, is_flow_track=(self.tracker_type=="flow-tracker")))#TODO, validate and removed hackiness
         self._next_id += 1
 
@@ -426,7 +462,6 @@ class Tracker:
         return best_track
 
 # Flow related section
-
     def compute_cost(self, flow, track_boxes, det_boxes):
         """
         params
