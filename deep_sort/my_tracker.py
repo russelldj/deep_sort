@@ -365,10 +365,11 @@ class Tracker:
         gt_masks   = [self.boundary_to_RLE(t.mask) for t in tracks]
         IOU = MaskUtil.iou(pred_masks, gt_masks, np.zeros((len(gt_masks))))
         IOU = IOU.transpose()
+        # NOTE this IOU is high when there is a good association, but everythin in posed as costs so it needs to be inverted
         if not IOU.shape == (len(tracks), len(dets)):
             pdb.set_trace()
         print("Mask IOU is {}".format(IOU))
-        return IOU
+        return 1 - IOU
 
     def boundary_to_RLE(self, contours):
         mask = cv2.fillPoly(np.zeros(self.image.shape[:2]), pts=[np.asarray(c) for c in contours], color=(255,255,255))
@@ -391,6 +392,7 @@ class Tracker:
                 linear_assignment.min_cost_matching(
                     self.mask_metric, self.max_iou_distance,
                     self.tracks, detections)
+            logging.warning("Matches: {}, unmatched_tracks: {}, unmatched_detections: {}".format(matches, unmatched_tracks, unmatched_detections))
 
         else:  # use the normal appearance features approach
             # Split track set into confirmed and unconfirmed tracks.

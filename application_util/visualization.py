@@ -160,7 +160,6 @@ class Visualization(object):
         if self.vis_method == "one-gt":
             if tracks == []: # there's issues with zero lists
                 return
-
             # for convenience we'll use self.gt_to_vis and self.tracks_to_vis
             # perhaps this isn't the way to do it. There will need to be a single gt index and a set of track indices
             # the logic is going to be pretty funky here

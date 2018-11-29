@@ -15,7 +15,7 @@ from deep_sort.tracker import Tracker
 from deep_sort.my_tracker import Tracker as MyTracker # make sure to avoid the namespace collision here;
 from deep_sort.flow_tracker import FlowTracker
 from deep_sort.scorer import Scorer
-from deep_sort.tools import ltwh_to_tlbr, tlbr_to_ltwh, safe_crop_ltbr
+from deep_sort.tools import ltwh_to_tlbr, tlbr_to_ltwh, ltrb_to_tlbr, safe_crop_ltbr
 import pandas as pd
 import pdb
 import re
@@ -52,7 +52,7 @@ def gather_sequence_info(sequence_dir, detection_file, track_class=None, detecti
 
     """
     print("THIS IS A HACK, THE DETECTION FILE IS HARDCODED")
-    detection_file = "/home/drussel1/data/ADL/new_mask_outputs/dataset_per_frame/first10k_P_18.h5"
+    detection_file = "/home/drussel1/data/ADL/new_mask_outputs/dataset_per_frame/P_18.MP4.h5"
     image_dir = os.path.join(sequence_dir, "img1")
     image_filenames = {
         int(os.path.splitext(f)[0]): os.path.join(image_dir, f)
@@ -241,7 +241,9 @@ def create_mask_detections(detection_h5_file, frame_idx, min_height=0, subset_fr
 
     detection_list = []
     for index, clas in enumerate(frame_dict["classes"]):
-        bbox = tlbr_to_ltwh(frame_dict["boxes"][index][:4]) # TODO make sure this is right
+        #these boxes are in the form ltrb which messed thing up real bad
+        bbox = tlbr_to_ltwh(ltrb_to_tlbr(frame_dict["boxes"][index][:4])) # TODO make sure this is right
+        # Turns out it wasn't right, the boxes 
         conf = frame_dict["boxes"][index][4]
         mask = frame_dict["contours"][index] 
         feature = np.zeros((128,))
@@ -250,7 +252,6 @@ def create_mask_detections(detection_h5_file, frame_idx, min_height=0, subset_fr
             continue
         # TODO add another field for detections so they can carry around a nice cute little mask
         detection_list.append(Detection(bbox, conf, feature, mask=mask))
-
     return detection_list
 
 
@@ -394,7 +395,7 @@ def run(sequence_dir, detection_file, output_file, min_confidence,
             if seq_info['groundtruth'] is not None:
                 vis.draw_groundtruth(*create_groundtruth(seq_info['groundtruth'], frame_idx))
             #HACK for showing detections
-            #vis.draw_detections(hc_nms_positive_detections)
+            vis.draw_detections(hc_nms_positive_detections)
             vis.draw_trackers(tracker.tracks, create_groundtruth(seq_info['groundtruth'], frame_idx)) # clean up the double use of create_groundtruht
 
         # Store results.
