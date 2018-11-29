@@ -246,7 +246,8 @@ class Track:
             if feature is not None: # this should be sufficiently general, I think this isn't all that important whether there's a new feature
                 # I take that back, it matters a lot
                 assert feature[0].shape == (128,)
-                self.features.append(feature[0])
+                logging.warning("not adding features during the flow update")
+                #self.features.append(feature[0])
             if update_hit: # if this is set to True, it effectively waits util it leaves the scene
                 self.time_since_update = 0 # now tracks will never die
                 self.hits += 1
