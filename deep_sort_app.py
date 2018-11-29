@@ -51,7 +51,7 @@ def gather_sequence_info(sequence_dir, detection_file, track_class=None, detecti
         * max_frame_idx: Index of the last frame.
 
     """
-    print("THIS IS A HACK, THE DETECTION FILE IS HARDCODED")
+    print("\n\n\nTHIS IS A HACK, THE DETECTION FILE IS HARDCODED\n\n\n")
     detection_file = "/home/drussel1/data/ADL/new_mask_outputs/dataset_per_frame/P_18.MP4.h5"
     image_dir = os.path.join(sequence_dir, "img1")
     image_filenames = {
@@ -133,7 +133,7 @@ def load_masks(detection_file):
     detections : I'm not sure
         the easiest would be to have this just be a h5 file but I'm not sure that is the best
     """
-    mask_file = h5py.File(detection_file)
+    mask_file = h5py.File(detection_file, 'r')
     return mask_file 
 
 def load_bboxs(detection_file):
@@ -216,7 +216,7 @@ def create_groundtruth(groundtruth_mat, frame_idx, min_height=0):
     return ind_list, box_list
 
 
-def create_mask_detections(detection_h5_file, frame_idx, min_height=0, subset_frames=None):
+def create_mask_detections(detection_h5_file, frame_idx, min_height=0, track_class=None, subset_frames=None):
     """Create detections for given frame index from the raw detection matrix.
 
     Parameters
@@ -241,11 +241,15 @@ def create_mask_detections(detection_h5_file, frame_idx, min_height=0, subset_fr
 
     detection_list = []
     for index, clas in enumerate(frame_dict["classes"]):
-        #these boxes are in the form ltrb which messed thing up real bad
+        if track_class is not None and clas != track_class:
+            continue #only add the detections of the targe class
+
+        #these boxes are in the form ltrb
         bbox = tlbr_to_ltwh(ltrb_to_tlbr(frame_dict["boxes"][index][:4])) # TODO make sure this is right
         # Turns out it wasn't right, the boxes 
         conf = frame_dict["boxes"][index][4]
         mask = frame_dict["contours"][index] 
+        # this is a HACK wherin we create a fake feature with the assumption that it will never be used
         feature = np.zeros((128,))
         feature[0] = 1
         if bbox[3] < min_height:
@@ -321,7 +325,7 @@ def run(sequence_dir, detection_file, output_file, min_confidence,
         If True, show visualization of intermediate tracking results.
 
     """
-    if track_class is not None:
+    if track_class is not None: # this doesn't do anything
         seq_info = gather_sequence_info(sequence_dir, detection_file, track_class)
     else:
         seq_info = gather_sequence_info(sequence_dir, detection_file)
@@ -341,14 +345,13 @@ def run(sequence_dir, detection_file, output_file, min_confidence,
     else: 
         good_frames = None
 
-    def frame_callback(vis, frame_idx):
+    def frame_callback(vis, frame_idx, track_class=track_class):
         print("Processing frame %05d" % frame_idx)
-        
         # this is is what should be called detections
         IS_MASK = True
         if IS_MASK:
             detections = create_mask_detections(
-                seq_info["detections"], frame_idx, min_detection_height)
+                seq_info["detections"], frame_idx, min_detection_height, track_class)
         else:
             detections = create_detections(
                 seq_info["detections"], frame_idx, min_detection_height)
@@ -395,7 +398,7 @@ def run(sequence_dir, detection_file, output_file, min_confidence,
             if seq_info['groundtruth'] is not None:
                 vis.draw_groundtruth(*create_groundtruth(seq_info['groundtruth'], frame_idx))
             #HACK for showing detections
-            vis.draw_detections(hc_nms_positive_detections)
+            #vis.draw_detections(hc_nms_positive_detections)
             vis.draw_trackers(tracker.tracks, create_groundtruth(seq_info['groundtruth'], frame_idx)) # clean up the double use of create_groundtruht
 
         # Store results.

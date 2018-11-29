@@ -7,7 +7,7 @@ from . import iou_matching
 from . import tools
 from .track import Track
 from .detection import Detection
-from .tools import ltwh_to_tlbr, tlbr_to_ltwh, safe_crop_ltbr
+from .tools import ltwh_to_tlbr, tlbr_to_ltwh, ltrb_to_tlbr, safe_crop_ltbr 
 from .images import Images
 
 from deep_sort.pycocotools import mask as MaskUtil # try to avoid colisions
@@ -78,8 +78,9 @@ class Tracker:
         self.OCCLUDER_STACK = False # use my initial hacky occluder thing
         self.USE_MODE = False
         self.USE_LOW_CONF = True
-        if tracker_type == "flow-tracker":
+        if tracker_type == "flow-tracker" or True:
             from . cosine_metric_learning import cosine_inference
+            logging.warning("hacked the logic of when to initialize the inference module")
             self.embedder = cosine_inference.CosineInference()
 
     def predict(self): # this doesn't need to be changed at all
@@ -142,7 +143,7 @@ class Tracker:
         # Update track set with the first round of matches
         for track_idx, detection_idx in matches:
             self.tracks[track_idx].update(
-                self.kf, detections[detection_idx])
+                self.kf, detections[detection_idx], self.image)
 
         #TODO this should really be changed to calling the flow_predict method for each track, and be moved later in the program
        
@@ -163,6 +164,9 @@ class Tracker:
                 # move the track based on the flow
                 self.flow_VOT(self.tracks[unmatched_track], self.image)
             # this ordering is important, you don't want to mark missed first
+            # if self.tracks[unmatched_track].is_confirmed():
+            #     self.image_VOT(self.tracks[unmatched_track], self.image) # update the track's location with a VOT
+
             self.tracks[unmatched_track].mark_missed() # this just handles deletions
         
         # get the deleted tracks
@@ -198,7 +202,44 @@ class Tracker:
             np.asarray(features), np.asarray(targets), active_targets)
         #this is the end of update
 
-    
+    def image_VOT(self, track, image):
+        """
+        predict the movement of the track with the tracks VOT tracker
+        ----------
+        track : deep_sort.Track
+            This is the track that needs to updated. Likely it will come from the unmatched but confirmed set
+        image : np.ndarray
+            This is the current image
+        return
+        ---------- 
+        None
+            The state of the track will be updated
+        #>>> tracker = Tracker("metric")
+        """
+        #HACK, this is from the last frame
+        assert track.is_confirmed() # might be removed
+        ok, tlbr_bbox = track.tracker_predict(image)
+        #this is shared with flow_VOT so it should be functionalized
+        if ok:
+            try:
+                feature = self.compute_descriptor(image, *ltrb_to_tlbr(tlbr_bbox))#TODO check that this is correct
+            except ValueError:
+                print("value error was thrown")
+                import pdb; pdb.set_trace()
+
+            if feature is None: # this means there was an error_ like a zero box
+                track.flow_update(self.kf, tlbr_to_ltwh(tlbr_bbox), feature=None, update_kf=False, update_hit=False) # this is an issue, i probably need to write another method, because it doesn't make sense to create a detection with some null feature
+            else:
+                dist_to_track_features = self.metric.distance_from_track_to_gallery(feature, track.track_id)
+                logging.warning("dist to track gallery is {}, but it's hacked so it always matches".format(dist_to_track_features))
+                # there should be a set for cropping and another for maintaining accuracy
+                #HACK
+                matched_gallery = True#self.metric.feature_within_max_distance(feature, track.track_id)
+
+                track.flow_update(self.kf, tlbr_to_ltwh(tlbr_bbox), feature, update_kf=matched_gallery, update_hit=matched_gallery) # this is an issue, i probably need to write another method, because it doesn't make sense to create a detection with some null feature
+        else:
+            print("tracking failed") 
+
     def flow_VOT(self, track, image=None, scale_factor=1):
         """
         predicts the movement of a track from the optical flow
@@ -249,7 +290,6 @@ class Tracker:
 
             tlwh_bbox = tlbr_to_ltwh([top, left, bottom, right])
             
-
             #track.flow_update(self.kf, tlwh_bbox, feature=none, update_kf=self.update_kf, update_hit=self.update_hit) # this is an issue, i probably need to write another method, because it doesn't make sense to create a detection with some null feature
             #return
 
@@ -260,7 +300,7 @@ class Tracker:
             #todo, make sure this dist to track thing is corrrect
             try:
                 feature = self.compute_descriptor(image, left, top, right, bottom)
-            except valueerror:
+            except ValueError:
                 print("value error was thrown")
                 import pdb; pdb.set_trace()
 
@@ -386,8 +426,17 @@ class Tracker:
                 linear_assignment.min_cost_matching(
                     self.flow_metric, self.max_iou_distance,
                     self.tracks, detections)
+        elif True:
+            # a hack to try matching only with bounding box iou_matching.iou_cost
+            logging.warning("HACK: always computing with bbox IOU")
+            matches, unmatched_tracks, unmatched_detections = \
+                linear_assignment.min_cost_matching(
+                    iou_matching.iou_cost, self.max_iou_distance,
+                    self.tracks, detections)
+            logging.warning("Matches: {}, unmatched_tracks: {}, unmatched_detections: {}".format(matches, unmatched_tracks, unmatched_detections))
+
         elif self.tracker_type == "mask-matcher" or True:
-            logging.warning("HACK: always entring here")
+            logging.warning("HACK: always entering here")
             matches, unmatched_tracks, unmatched_detections = \
                 linear_assignment.min_cost_matching(
                     self.mask_metric, self.max_iou_distance,
