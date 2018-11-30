@@ -3,6 +3,8 @@ from .tools import ltwh_to_xyah, xyah_to_ltwh, ltwh_to_tlbr
 import numpy as np
 from scipy import stats
 import logging
+import cv2
+import pdb
 
 class TrackState:
     """
@@ -19,7 +21,6 @@ class TrackState:
     Confirmed = 2
     Deleted = 3
     Occluded = 4
-
 
 class Track:
     """
@@ -88,11 +89,30 @@ class Track:
         if feature is not None:
             self.features.append(feature)
 
+        # TODO have a method which returns if the track is being moved by the tracker
+        self.tracker = cv2.TrackerMOSSE_create()
+        #TODO determine whether it will have to be inteligently reinitialized or if simply updating it
+        # you could hack it so the update is done with the image chip
+
         self.occluded_stack = []
 
         self._n_init = n_init
         self._max_age = max_age
         self.use_location = False
+
+    def init_tracker(self, image):
+        # reset the tracker location with the new image and the current tracker state
+        self.tracker.init(image, tuple(self.to_tlwh().tolist()))
+   
+    def tracker_update(self, image):
+        pdb.set_trace()
+        ok, bbox = self.tracker_predict(image)
+        if ok: # there wasn't a tracking 
+            print("ok")
+
+    def tracker_predict(self, image):
+        ok, bbox = self.tracker.update(image)
+        return ok, ltwh_to_tlbr(bbox)
 
     def to_tlwh(self):
         """Get current position in bounding box format `(top left x, top left y,
@@ -103,10 +123,7 @@ class Track:
         ndarray
             The bounding box.
         """
-
-        logging.warning("self.use_location is {}".format(self.use_location))
-
-        if self.use_location: #
+        if self.use_location:
             assert self.location is not None, "time is {}".format(self.time_since_update)
             return self.location.copy() # which had better be stored in the ltwh.copy()
         else:
@@ -214,7 +231,7 @@ class Track:
         self.time_since_update += 1
 
 
-    def flow_update(self, kf, ltwh_bbox, feature=None, update_kf=True, update_hit=False):
+    def flow_update(self, kf, ltwh_bbox, image, feature=None, update_kf=True, update_hit=False):
         """The logic here is evolving but the current approach is as follows:
         If the current feature looks similar, i.e. it is less than max_cosine_distance from a previous feature, perform a REAL update
         * this means that the time_since_update will be set to zero
@@ -238,15 +255,15 @@ class Track:
         # else, perform a direct location update and 
         #TODO add the feature if we care about it
 
-        assert self.is_flow_track, "This isn't set so there will be an issue with to_ltwh"
+        #assert self.is_flow_track, "This isn't set so there will be an issue with to_ltwh"
         logging.warning("doing a flow update")
+        # the mask should stay the same here, or be shifted by the flow
         if update_kf:
             self.mean, self.covariance = kf.update(
                 self.mean, self.covariance, ltwh_to_xyah(ltwh_bbox)) #TODO make sure this is the same effoect as self.update
             if feature is not None: # this should be sufficiently general, I think this isn't all that important whether there's a new feature
-                # I take that back, it matters a lot
-                assert feature[0].shape == (128,)
-                logging.warning("not adding features during the flow update")
+                assert feature[0].shape == (128,) # features come in shaped like (128,1) and we need them to be (128,)
+                logging.warning("no longer adding features on flow updates")
                 #self.features.append(feature[0])
             if update_hit: # if this is set to True, it effectively waits util it leaves the scene
                 self.time_since_update = 0 # now tracks will never die
@@ -259,7 +276,11 @@ class Track:
             self.location = ltwh_bbox.copy()
             self.use_location = True
 
-    def update(self, kf, detection):
+        assert image is not None
+        if image is not None:
+            self.init_tracker(image)
+
+    def update(self, kf, detection, image):
         """Perform Kalman filter measurement update step and update the feature
         cache.
 
@@ -276,7 +297,7 @@ class Track:
         # eventually this will be used with masks so just keep that in mind
         self.mean, self.covariance = kf.update(
             self.mean, self.covariance, detection.to_xyah())
-        assert detection.feature.shape == (128,)
+        #assert detection.feature.shape == (128,)
         self.features.append(detection.feature)
 
         self.hits += 1
@@ -284,6 +305,12 @@ class Track:
         if self.state == TrackState.Tentative and self.hits >= self._n_init:
             self.state = TrackState.Confirmed
         self.use_location = False
+
+        #new functionality, update the tracker
+        #TODO add the image
+        assert image is not None
+        if image is not None:
+            self.init_tracker(image)
 
     def mark_missed(self):
         """Mark this track as missed (no association at the current time step).
