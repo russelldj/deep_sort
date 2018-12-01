@@ -7,7 +7,7 @@ from . import iou_matching
 from . import tools
 from .track import Track
 from .detection import Detection
-from .tools import ltwh_to_tlbr, tlbr_to_ltwh, ltrb_to_tlbr, safe_crop_ltbr
+from .tools import ltwh_to_tlbr, tlbr_to_ltwh, ltrb_to_tlbr, tlbr_to_ltrb, safe_crop_ltbr
 from .images import Images
 from scipy import stats
 
@@ -81,6 +81,7 @@ class Tracker:
         if tracker_type == "flow-tracker":
             from . cosine_metric_learning import cosine_inference
             self.embedder = cosine_inference.CosineInference()
+        self.gt_inds = [] # this will keep a list of all gts used to initialize tracks
 
     def predict(self): # this doesn't need to be changed at all
         """Propagate track state distributions one time step forward.
@@ -110,7 +111,38 @@ class Tracker:
         start = time.time()
         feature = self.embedder.get_features(image)
         logging.warning("feature computation took {} seconds".format(time.time() - start))
+        #TODO change this to be (128,)
         return feature
+
+
+    def initialize_from_gts(self, gt_inds, gt_boxes, image):
+        """ Initializes the tracks from the first appearance of a groundtruth ID
+
+        Params
+        ----------          
+        gt_inds : List[int]
+            The ID of the groundtruths
+        gt_boxes : List[np.ndarray]
+            The boxes in the [x, y, w, h] format
+        
+        Returns
+        ---------- 
+        None
+        It simply initializes tracks
+        """
+        assert len(gt_inds) == len(gt_boxes)
+        for ind, ltwh_box in zip(gt_inds, gt_boxes):
+            if ind in self.gt_inds:
+                continue
+            # compute_descriptor(self, image, x1, y1, x2, y2)
+            feature = self.compute_descriptor(image, *tlbr_to_ltrb(ltwh_to_tlbr(ltwh_box)))[0] #TODO update this when I fixe the extractor
+            assert feature.shape == (128,)
+            confidence = 1 # it's guaranteed to be correct
+            det = Detection(ltwh_box, confidence, feature)
+            is_gt = True
+            self._initiate_track(det, is_gt)
+            self.gt_inds.append(ind)
+
 
     def update(self, detections, **kwargs): # this is the root of what needs to be changed
         """Perform measurement update and track management.
@@ -136,73 +168,80 @@ class Tracker:
         assert self.image is not None
 
         #Do the matching either with flow or appearance
-        matches, unmatched_tracks, unmatched_detections = \
-            self._match(detections)
-        logging.warning('matches {}, unmatched_tracks {}, unmatched_detections {}'.format(matches, unmatched_tracks, unmatched_detections))
-        
-        # Update track set with the first round of matches
-        for track_idx, detection_idx in matches:
-            self.tracks[track_idx].update(
-                self.kf, detections[detection_idx], self.image)
-
-        #TODO this should really be changed to calling the flow_predict method for each track, and be moved later in the program
-       
-        if kwargs["use_unmatched"]:
-            #unmatched_tracks is really the indices of the same
-            if self.USE_LOW_CONF:
-                unmatched_track = self.retry_detections(unmatched_tracks, [detections[i] for i in unmatched_detections], kwargs["bad_detections"], initialize_new_tracks=True)
-            else:
-                unmatched_track = self.retry_detections(unmatched_tracks, [detections[i] for i in unmatched_detections], [], initialize_new_tracks=True)
-        else:
-            for ud in [detections[i] for i in unmatched_detections]:
-                self._initiate_track(ud)
-
-        for unmatched_track in unmatched_tracks: # these places are where the births and deaths start, but they aren't finalized until later. I need to find that place
-            
-            #assert not self.tracks[unmatched_track].is_tentative()
-            if self.tracker_type == "flow-tracker" and self.tracks[unmatched_track].is_confirmed(): 
-                # move the track based on the flow
-                #self.flow_VOT(self.tracks[unmatched_track], self.image)
-                logging.warning("NO LONGER DOING FLOW UPDATES BUT RATHER TRACKER ONES")
-                self.image_VOT(self.tracks[unmatched_track], self.image)
-
-            # this ordering is important, you don't want to mark missed first
-            self.tracks[unmatched_track].mark_missed() # this just handles deletions
-        
-        # get the deleted tracks
-        deleted_tracks = [t for t in self.tracks if t.is_deleted()]
-        # the filter them out from the list
-        self.tracks = [t for t in self.tracks if not t.is_deleted()]
-        # and now do matching
-        if len(deleted_tracks) > 0:
+        JUST_VOT=True
+        if JUST_VOT:
             for track in self.tracks:
-                logging.debug( 'DEATH ID: {}, state: {}, strong: {}, stack: {}'.format(track.track_id, track.state, track.is_strong(), track.occluded_stack))
-        
-        if self.OCCLUDER_STACK:
-            for deleted_track in deleted_tracks:
-                # we only want to match with a good track so require_strong is true
-                best_occluder = self.get_max_overlap(deleted_track.to_tlbr(), require_strong=True)
-                num_adds = 0
+                self.image_VOT(track,self.image)
+            # get the deleted tracks
+            deleted_tracks = [t for t in self.tracks if t.is_deleted()]
+            # the filter them out from the list
+            self.tracks = [t for t in self.tracks if not t.is_deleted()]
+        else:
+            matches, unmatched_tracks, unmatched_detections = \
+                self._match(detections)
+            logging.warning('matches {}, unmatched_tracks {}, unmatched_detections {}'.format(matches, unmatched_tracks, unmatched_detections))
+            
+            # Update track set with the first round of matches
+            for track_idx, detection_idx in matches:
+                self.tracks[track_idx].update(
+                    self.kf, detections[detection_idx], self.image)
+
+            #TODO this should really be changed to calling the flow_predict method for each track, and be moved later in the program
+       
+            if kwargs["use_unmatched"]:
+                #unmatched_tracks is really the indices of the same
+                if self.USE_LOW_CONF:
+                    unmatched_track = self.retry_detections(unmatched_tracks, [detections[i] for i in unmatched_detections], kwargs["bad_detections"], initialize_new_tracks=True)
+                else:
+                    unmatched_track = self.retry_detections(unmatched_tracks, [detections[i] for i in unmatched_detections], [], initialize_new_tracks=True)
+            else:
+                for ud in [detections[i] for i in unmatched_detections]:
+                    self._initiate_track(ud)
+
+            for unmatched_track in unmatched_tracks: # these places are where the births and deaths start, but they aren't finalized until later. I need to find that place
+                
+                #assert not self.tracks[unmatched_track].is_tentative()
+                if self.tracker_type == "flow-tracker" and self.tracks[unmatched_track].is_confirmed(): 
+                    # move the track based on the flow
+                    #self.flow_VOT(self.tracks[unmatched_track], self.image)
+                    logging.warning("NO LONGER DOING FLOW UPDATES BUT RATHER TRACKER ONES")
+                    self.image_VOT(self.tracks[unmatched_track], self.image)
+
+                # this ordering is important, you don't want to mark missed first
+                self.tracks[unmatched_track].mark_missed() # this just handles deletions
+            
+            # get the deleted tracks
+            deleted_tracks = [t for t in self.tracks if t.is_deleted()]
+            # the filter them out from the list
+            self.tracks = [t for t in self.tracks if not t.is_deleted()]
+            # and now do matching
+            if len(deleted_tracks) > 0:
                 for track in self.tracks:
-                    if track.track_id == best_occluder:# there is no other way to index them with the simple list
-                        track.add_occluded(deleted_track.track_id)
-                        assert num_adds == 0 # it shouldn't add the same thing twice
-                        num_adds += 1
+                    logging.debug( 'DEATH ID: {}, state: {}, strong: {}, stack: {}'.format(track.track_id, track.state, track.is_strong(), track.occluded_stack))
+            
+            if self.OCCLUDER_STACK:
+                for deleted_track in deleted_tracks:
+                    # we only want to match with a good track so require_strong is true
+                    best_occluder = self.get_max_overlap(deleted_track.to_tlbr(), require_strong=True)
+                    num_adds = 0
+                    for track in self.tracks:
+                        if track.track_id == best_occluder:# there is no other way to index them with the simple list
+                            track.add_occluded(deleted_track.track_id)
+                            assert num_adds == 0 # it shouldn't add the same thing twice
+                            num_adds += 1
 
-        # Update distance metric.
-        active_targets = [t.track_id for t in self.tracks if t.is_confirmed()]
-        features, targets = [], []
-        for track in self.tracks:
-            if not track.is_confirmed():
-                continue
-            features += track.features
-            targets += [track.track_id for _ in track.features] # it's a little bit unclear what is going on here
-            track.features = [] # all tracks have their features reset if they are confirmed
-        self.metric.partial_fit(
-            np.asarray(features), np.asarray(targets), active_targets)
-        #this is the end of update
-
-
+            # Update distance metric.
+            active_targets = [t.track_id for t in self.tracks if t.is_confirmed()]
+            features, targets = [], []
+            for track in self.tracks:
+                if not track.is_confirmed():
+                    continue
+                features += track.features
+                targets += [track.track_id for _ in track.features] # it's a little bit unclear what is going on here
+                track.features = [] # all tracks have their features reset if they are confirmed
+            self.metric.partial_fit(
+                np.asarray(features), np.asarray(targets), active_targets)
+            #this is the end of update
 
     def image_VOT(self, track, image):
         """
@@ -218,8 +257,7 @@ class Tracker:
             The state of the track will be updated
         #>>> tracker = Tracker("metric")
         """
-        #HACK, this is from the last frame
-        assert track.is_confirmed() # might be removed
+        print("PREDICTION IS HAPPENING")
         ok, tlbr_bbox = track.tracker_predict(image)
         #this is shared with flow_VOT so it should be functionalized
         if ok:
@@ -232,15 +270,17 @@ class Tracker:
             if feature is None: # this means there was an error_ like a zero box
                 track.flow_update(self.kf, tlbr_to_ltwh(tlbr_bbox), self.image, feature=None, update_kf=False, update_hit=False) # this is an issue, i probably need to write another method, because it doesn't make sense to c
             else:
-                dist_to_track_features = self.metric.distance_from_track_to_gallery(feature, track.track_id)
-                logging.warning("dist to track gallery is {}, but it's hacked so it always matches".format(dist_to_track_features))
+                #dist_to_track_features = self.metric.distance_from_track_to_gallery(feature, track.track_id)
+                #logging.warning("dist to track gallery is {}, but it's hacked so it always matches".format(dist_to_track_features))
                 # there should be a set for cropping and another for maintaining accuracy
                 #HACK
                 #TODO change this so they die at some point
-                matched_gallery = self.metric.feature_within_max_distance(feature, track.track_id)
+                logging.warning("HACKED so it always matches the gallery")
+                matched_gallery = True#self.metric.feature_within_max_distance(feature, track.track_id)
 
                 track.flow_update(self.kf, tlbr_to_ltwh(tlbr_bbox), feature, update_kf=matched_gallery, update_hit=matched_gallery) # this is an issue, i probably need to write another method, because it doesn't 
         else:
+            track.mark_missed()
             print("tracking failed") 
 
 
@@ -429,13 +469,15 @@ class Tracker:
             unmatched_tracks = list(set(unmatched_tracks_a + unmatched_tracks_b))
         return matches, unmatched_tracks, unmatched_detections
 
-    def _initiate_track(self, detection):
+    def _initiate_track(self, detection, is_gt=False):
         # this is where to search for nearby tracks which are occluding something
-        mean, covariance = self.kf.initiate(detection.to_xyah())
-        self.tracks.append(Track(
-            mean, covariance, self._next_id, self.n_init, self.max_age,
-            detection.feature, is_flow_track=(self.tracker_type=="flow-tracker")))#TODO, validate and removed hackiness
-        self._next_id += 1
+        assert detection.feature.shape == (128,)
+        if is_gt:
+            mean, covariance = self.kf.initiate(detection.to_xyah())
+            self.tracks.append(Track(
+                mean, covariance, self._next_id, self.n_init, self.max_age,
+                detection.feature, self.image, is_flow_track=(self.tracker_type=="flow-tracker")))#TODO, validate and removed hackiness
+            self._next_id += 1
 
     def get_max_overlap(self, occluded_box, require_strong=False, require_occluded=False, distance_threshold=1):
         """ this could be used for other stuff, like births

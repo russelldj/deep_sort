@@ -290,6 +290,7 @@ def run(sequence_dir, detection_file, output_file, min_confidence,
             tracker.update(hc_nms_positive_detections)
         else:
             tracker.update(hc_nms_positive_detections, bad_detections=hc_nms_negative_detections+low_confidence_detections, image=image, use_unmatched=kwargs["use_unmatched"], frame_idx=frame_idx)
+        tracker.initialize_from_gts(*create_groundtruth(seq_info['groundtruth'], frame_idx), image)
 
         # Update visualization.
         if display:

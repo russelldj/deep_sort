@@ -73,8 +73,10 @@ class Track:
     """
 
     def __init__(self, mean, covariance, track_id, n_init, max_age,
-                 feature=None, is_flow_track=False):
+                 feature=None, image=None, is_flow_track=False):
         #TODO determine what the format of this should be i.e., ltrb or ltwh
+        if image is not None:
+            assert image.shape[2] == 3
         self.mean = mean # this is the location if it is a flow track in the format [l,t,r,b]
         self.location = None #ltwh_to_tlbr(xyah_[:4]))
         self.covariance = covariance
@@ -99,6 +101,8 @@ class Track:
         self._n_init = n_init
         self._max_age = max_age
         self.use_location = False
+
+        self.init_tracker(image)
 
     def init_tracker(self, image):
         # reset the tracker location with the new image and the current tracker state

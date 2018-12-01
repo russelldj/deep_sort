@@ -24,6 +24,15 @@ def ltwh_to_tlbr(bbox): # these boxes are really ltwh
     right  = left + bbox[2]
     return np.array([top, left, bottom, right])
 
+def tlbr_to_ltrb(bbox):
+    """
+    >>> ltbr = np.asarray([10, 20, 101, 122])
+    ... assert np.array_equal(tlbr_to_ltrb(tlbr_to_ltrb(ltbr)), ltbr)
+    """
+    return ltrb_to_tlbr(bbox) # it's the same as the other way
+
+
+
 def ltrb_to_tlbr(bbox):
     #this composed with itself is an identity mapping
     return np.asarray([bbox[1], bbox[0], bbox[3], bbox[2]]) 
