@@ -48,14 +48,6 @@ class Tracker:
     tracks : List[Track]
         The list of active tracks at the current time step.
     """
-    # TODO
-    # determine where tracks die
-    # And what the underlying data structure of the track object is
-    # first need to add the que 
-    ## I'm not sure that it is the correct approach to use a que, but it seems as likely to work as the other ones
-    # Then do the death association
-    # then the birth
-
     def __init__(self, metric,  max_iou_distance=0.7, max_age=30, n_init=3, tracker_type="deep-sort", flow_dir="", update_kf=False, update_hit=False): #KEY these are really important parameters 
         self.metric = metric
         self.max_iou_distance = max_iou_distance
@@ -78,6 +70,10 @@ class Tracker:
         self.OCCLUDER_STACK = False # use my initial hacky occluder thing
         self.USE_MODE = False
         self.USE_LOW_CONF = True
+        #these two flags might actually have to be the same
+        self.GT_INITIALIZATIONS = True # this controls whether to initialize on consistent detections or groundtruths
+        #this can't be True if GT_INITIALIZATIONS is False
+        self.JUST_VOT=True # tracking with a VOT rather than tracking by detection
         if tracker_type == "flow-tracker":
             from . cosine_metric_learning import cosine_inference
             self.embedder = cosine_inference.CosineInference()
@@ -130,6 +126,9 @@ class Tracker:
         None
         It simply initializes tracks
         """
+        if not self.GT_INITIALIZATIONS:#this is a bit gross, but I can see how it would make things easier
+            return None
+
         assert len(gt_inds) == len(gt_boxes)
         for ind, ltwh_box in zip(gt_inds, gt_boxes):
             if ind in self.gt_inds:
@@ -142,6 +141,9 @@ class Tracker:
             is_gt = True
             self._initiate_track(det, is_gt)
             self.gt_inds.append(ind)
+
+    def output_features(self, track, image):
+        H5_FILE_NAME = "features.h5"
 
 
     def update(self, detections, **kwargs): # this is the root of what needs to be changed
@@ -160,16 +162,14 @@ class Tracker:
         # if using my modification, match some more tracks to detections, potentially low-conf ones
         # if propogatign by flow, do that for all tracks that you don't want to kill
 
-        #TODO try to fix the organization of this so it's a bit less heinous
+        # TODO try to fix the organization of this so it's a bit less heinous
         # TODO a lot of that could be accomplished by putting some stuff in functions
-
         self.image = kwargs["image"]
         self.load_frame_flow(kwargs["frame_idx"])
         assert self.image is not None
 
         #Do the matching either with flow or appearance
-        JUST_VOT=True
-        if JUST_VOT:
+        if self.JUST_VOT:
             for track in self.tracks:
                 self.image_VOT(track,self.image)
             # get the deleted tracks
@@ -195,8 +195,9 @@ class Tracker:
                 else:
                     unmatched_track = self.retry_detections(unmatched_tracks, [detections[i] for i in unmatched_detections], [], initialize_new_tracks=True)
             else:
-                for ud in [detections[i] for i in unmatched_detections]:
-                    self._initiate_track(ud)
+                if not self.GT_INITIALIZATIONS:
+                    for ud in [detections[i] for i in unmatched_detections]:
+                        self._initiate_track(ud, not self.GT_INITIALIZATIONS) #the track will only be initialized if GT_INITIALIZATIONS is False
 
             for unmatched_track in unmatched_tracks: # these places are where the births and deaths start, but they aren't finalized until later. I need to find that place
                 
@@ -408,8 +409,9 @@ class Tracker:
                 if len(confirmed_unmatched_tracks_) == 0:
                     break # we are done, though maybe all of the detections should actually be matched confirmed_unmatched_track_inxs_ = [self.tracks.index(c_u_t) for c_u_t in confirmed_unmatched_tracks_]
         non_NMS_final_unmatched_detections = [ud for ud in final_unmatched_detections_ if not ud.was_NMS_suppressed]
-        for ud in non_NMS_final_unmatched_detections:
-            self._initiate_track(ud)
+        if not self.GT_INITIALIZATIONS:
+            for ud in non_NMS_final_unmatched_detections:
+                self._initiate_track(ud, not self.GT_INITIALIZATIONS) #the track will only be initialized if GT_INITIALIZATIONS is False
 
         #input("non_NMS_final_unmatched_detections {}\n, initial_unmatched_detections_ {}\n bad_detections {}".format(non_NMS_final_unmatched_detections, initial_unmatched_detections_,otherwise_excluded_detections_))
         return confirmed_unmatched_track_inxs_
@@ -470,6 +472,19 @@ class Tracker:
         return matches, unmatched_tracks, unmatched_detections
 
     def _initiate_track(self, detection, is_gt=False):
+        """
+        params
+        ----------  
+        detection : deep_sort.Detection
+            This is the new detection that begins a track
+        is_gt : Bool
+            This is a bit hacky but this needs to be true in order for this code to do anything
+
+        returns
+        ----------           
+        None
+            Tracks are simply added to the self.tracks variable
+        """
         # this is where to search for nearby tracks which are occluding something
         assert detection.feature.shape == (128,)
         if is_gt:

@@ -1,6 +1,7 @@
 # vim: expandtab:ts=4:sw=4
 import argparse
 import os
+import glob
 import sys
 import deep_sort_app
 from deep_sort import tools
@@ -65,9 +66,15 @@ if __name__ == "__main__":
     os.makedirs(args.output_dir, exist_ok=True)
     sequences = os.listdir(args.mot_dir)
     for sequence in sequences:
-        print("Running sequence %s" % sequence)
         sequence_dir = os.path.join(args.mot_dir, sequence)
-        detection_file = os.path.join(args.detection_dir, "%s.npy" % sequence)
+        
+        # this is a bit janky but it should deal with the different file extensions
+        detection_file = os.path.join(args.detection_dir, sequence)
+        detection_file = glob.glob("{}*".format(detection_file)) 
+        assert len(detection_file) == 1
+        detection_file = detection_file[0]
+        print("Running sequence {} with detection file {}".format(sequence, detection_file))
+
         output_file = os.path.join(args.output_dir, "%s.txt" % sequence)
         video_output_file = os.path.join(args.output_dir, "{}_video.avi".format(sequence))
         deep_sort_app.run(
