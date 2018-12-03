@@ -15,12 +15,15 @@ from deep_sort.tracker import Tracker
 from deep_sort.my_tracker import Tracker as MyTracker # make sure to avoid the namespace collision here;
 from deep_sort.flow_tracker import FlowTracker
 from deep_sort.scorer import Scorer
+from deep_sort.tools import ltwh_to_tlbr, tlbr_to_ltwh, ltrb_to_tlbr, safe_crop_ltbr
 import pandas as pd
 import pdb
 import re
 import logging
+import h5py
+import json
 
-def gather_sequence_info(sequence_dir, detection_file, track_class=None):
+def gather_sequence_info(sequence_dir, detection_file, track_class=None, detection_masks=True):
     """Gather sequence information, such as image filenames, detections,
     groundtruth (if available).
 
@@ -30,6 +33,8 @@ def gather_sequence_info(sequence_dir, detection_file, track_class=None):
         Path to the MOTChallenge sequence directory.
     detection_file : str
         Path to the detection file.
+    detection_masks : Bool
+        Whether the detections have the masks written out
 
     Returns
     -------
@@ -39,44 +44,25 @@ def gather_sequence_info(sequence_dir, detection_file, track_class=None):
         * sequence_name: Name of the sequence
         * image_filenames: A dictionary that maps frame indices to image
           filenames.
-        * detections: A numpy array of detections in MOTChallenge format.
+        * detections: A numpy array of detections in MOTChallenge format. OR a h5 file view if use masks
         * groundtruth: A numpy array of ground truth in MOTChallenge format.
         * image_size: Image size (height, width).
         * min_frame_idx: Index of the first frame.
         * max_frame_idx: Index of the last frame.
 
     """
+    print("\n\n\nTHIS IS A HACK, THE DETECTION FILE IS HARDCODED\n\n\n")
+    detection_file = "/home/drussel1/data/ADL/new_mask_outputs/dataset_per_frame/P_18.MP4.h5"
     image_dir = os.path.join(sequence_dir, "img1")
     image_filenames = {
         int(os.path.splitext(f)[0]): os.path.join(image_dir, f)
         for f in os.listdir(image_dir)}
     groundtruth_file = os.path.join(sequence_dir, "gt/gt.txt")
-
-    detections = None
-    if detection_file is not None:
-        #MOD
-        if os.path.isfile(detection_file):
-            _, extension = os.path.splitext(detection_file)
-            if extension == ".npy":
-                detections = np.load(detection_file)
-            elif extension == ".h5":
-                import h5py
-                import pdb; pdb.set_trace()
-                detection = h5py.File(detection_file)
-            else:
-                raise ValueError("The detection file should be .npy or .h5")
-
-            #MOD
-            if track_class is not None:
-                # only retain the tracks with thei
-                inds = detections[:,1] == track_class
-                detections = detections[inds, :] # get only the detections which have the target class, which is the second column
-                print("Only using tracks from class {}".format(track_class))
-
-
-
-        else:
-            detections = None
+    
+    if detection_masks:
+        detections = load_masks(detection_file) 
+    else:
+        detections = load_bboxs(detection_file) 
 
     if os.path.exists(groundtruth_file):
         groundtruth = np.loadtxt(groundtruth_file, delimiter=' ')
@@ -108,8 +94,13 @@ def gather_sequence_info(sequence_dir, detection_file, track_class=None):
         update_ms = 1000 / int(info_dict["frameRate"])
     else:
         update_ms = None
-        
-    feature_dim = detections.shape[1] - 10 if detections is not None else 0
+       
+    if detection_masks:
+        feature_dim = 0 #this is a HACK as I'm not going to use features with this yet
+    else:
+        feature_dim = detections.shape[1] - 10 if detections is not None else 0
+    
+    #TODO build the detections output from the json and have the h5 file returned seperately
     seq_info = {
         "sequence_name": os.path.basename(sequence_dir),
         "image_filenames": image_filenames,
@@ -122,6 +113,67 @@ def gather_sequence_info(sequence_dir, detection_file, track_class=None):
         "update_ms": update_ms
     }
     return seq_info
+
+def retrieve_frame(h5_file, frame_id):
+    frame_id = str(frame_id)
+    frame_data = json.loads(h5_file[frame_id].value)
+    assert type(frame_data) == dict
+    return frame_data
+
+def load_masks(detection_file):
+    """
+    params
+    ---------- 
+    detection_file : str
+        path to the h5 file which has a dataset for each frame
+        The data is encoded with json.dumps so it can be decoded with json.loads
+
+    returns
+    ---------- 
+    detections : I'm not sure
+        the easiest would be to have this just be a h5 file but I'm not sure that is the best
+    """
+    mask_file = h5py.File(detection_file, 'r')
+    return mask_file 
+
+def load_bboxs(detection_file):
+    """
+    params
+    ----------
+    detection_file : str
+        The path to a detection file containing rectangular bounding boxes in the MOT format and potentially descriptors
+
+    returns
+    ---------- 
+    detections: np.ndarray
+         each row is in the MOT format (I think)
+    """
+    detections = None
+    if detection_file is not None:
+        #MOD
+        if os.path.isfile(detection_file):
+            _, extension = os.path.splitext(detection_file)
+            if extension == ".npy":
+                detections = np.load(detection_file)
+            elif extension == ".h5":
+                import h5py
+                import pdb; pdb.set_trace()
+                detection = h5py.File(detection_file)
+            else:
+                raise ValueError("The detection file should be .npy or .h5")
+
+            #MOD
+            if track_class is not None:
+                # only retain the tracks with thei
+                inds = detections[:,1] == track_class
+                detections = detections[inds, :] # get only the detections which have the target class, which is the second column
+                print("Only using tracks from class {}".format(track_class))
+
+
+
+        else:
+            detections = None
+        return detections
 
 def create_groundtruth(groundtruth_mat, frame_idx, min_height=0):
     """Create groundtruths for given frame index from the raw detection matrix.
@@ -162,6 +214,50 @@ def create_groundtruth(groundtruth_mat, frame_idx, min_height=0):
         box_list.append(2*box)
         ind_list.append(ind)
     return ind_list, box_list
+
+
+def create_mask_detections(detection_h5_file, frame_idx, min_height=0, track_class=None, subset_frames=None):
+    """Create detections for given frame index from the raw detection matrix.
+
+    Parameters
+    ----------
+    detection_mat : ndarray
+        A h5 file where each dataset is indexed by the frame and can be decoded with json.loads
+    frame_idx : int
+        The frame index.
+    min_height : Optional[int]
+        A minimum detection bounding box height. Detections that are smaller
+        than this value are disregarded.
+    subset_frames : Optional[np.array()]
+        Only these frames are used
+
+    Returns
+    -------
+    List[tracker.Detection]
+        Returns detection responses at given frame index.
+
+    """
+    frame_dict = retrieve_frame(detection_h5_file, frame_idx)
+
+    detection_list = []
+    for index, clas in enumerate(frame_dict["classes"]):
+        if track_class is not None and clas != track_class:
+            continue #only add the detections of the targe class
+
+        #these boxes are in the form ltrb
+        bbox = tlbr_to_ltwh(ltrb_to_tlbr(frame_dict["boxes"][index][:4])) # TODO make sure this is right
+        # Turns out it wasn't right, the boxes 
+        conf = frame_dict["boxes"][index][4]
+        mask = frame_dict["contours"][index] 
+        # this is a HACK wherin we create a fake feature with the assumption that it will never be used
+        feature = np.zeros((128,))
+        feature[0] = 1
+        if bbox[3] < min_height:
+            continue
+        # TODO add another field for detections so they can carry around a nice cute little mask
+        detection_list.append(Detection(bbox, conf, feature, mask=mask))
+    return detection_list
+
 
 def create_detections(detection_mat, frame_idx, min_height=0, subset_frames=None):
     """Create detections for given frame index from the raw detection matrix.
@@ -229,7 +325,7 @@ def run(sequence_dir, detection_file, output_file, min_confidence,
         If True, show visualization of intermediate tracking results.
 
     """
-    if track_class is not None:
+    if track_class is not None: # this doesn't do anything
         seq_info = gather_sequence_info(sequence_dir, detection_file, track_class)
     else:
         seq_info = gather_sequence_info(sequence_dir, detection_file)
@@ -249,12 +345,16 @@ def run(sequence_dir, detection_file, output_file, min_confidence,
     else: 
         good_frames = None
 
-    def frame_callback(vis, frame_idx):
+    def frame_callback(vis, frame_idx, track_class=track_class):
         print("Processing frame %05d" % frame_idx)
-        
         # this is is what should be called detections
-        detections = create_detections(
-            seq_info["detections"], frame_idx, min_detection_height)
+        IS_MASK = True
+        if IS_MASK:
+            detections = create_mask_detections(
+                seq_info["detections"], frame_idx, min_detection_height, track_class)
+        else:
+            detections = create_detections(
+                seq_info["detections"], frame_idx, min_detection_height)
         
         # this is the high confidence detections
         high_confidence_detections = [d for d in detections if d.confidence >= min_confidence]
@@ -270,7 +370,8 @@ def run(sequence_dir, detection_file, output_file, min_confidence,
         # hc = high_conf
         hc_boxes = np.array([d.tlwh for d in high_confidence_detections])
         hc_scores = np.array([d.confidence for d in high_confidence_detections])
-
+        
+        #TODO try to do mask NMS
         indices = preprocessing.non_max_suppression(
             hc_boxes, nms_max_overlap, hc_scores)
 

@@ -74,11 +74,13 @@ class Track:
 
     def __init__(self, mean, covariance, track_id, n_init, max_age,
                  feature=None, image=None, is_flow_track=False):
-        #TODO determine what the format of this should be i.e., ltrb or ltwh
+        # TODO make sure all of the args are being parsed correctly
         if image is not None:
             assert image.shape[2] == 3
         self.mean = mean # this is the location if it is a flow track in the format [l,t,r,b]
         self.location = None #ltwh_to_tlbr(xyah_[:4]))
+        assert type(mask) == list
+        self.mask = mask # a null mask
         self.covariance = covariance
         self.track_id = track_id
         self.hits = 1
@@ -281,8 +283,7 @@ class Track:
             self.use_location = True
 
         assert image is not None
-        if image is not None:
-            self.init_tracker(image)
+        self.init_tracker(image)
 
     def update(self, kf, detection, image):
         """Perform Kalman filter measurement update step and update the feature
@@ -303,6 +304,7 @@ class Track:
             self.mean, self.covariance, detection.to_xyah())
         #assert detection.feature.shape == (128,)
         self.features.append(detection.feature)
+        self.mask = detection.mask
 
         self.hits += 1
         self.time_since_update = 0
@@ -313,8 +315,7 @@ class Track:
         #new functionality, update the tracker
         #TODO add the image
         assert image is not None
-        if image is not None:
-            self.init_tracker(image)
+        self.init_tracker(image)
 
     def mark_missed(self):
         """Mark this track as missed (no association at the current time step).

@@ -31,8 +31,6 @@ def tlbr_to_ltrb(bbox):
     """
     return ltrb_to_tlbr(bbox) # it's the same as the other way
 
-
-
 def ltrb_to_tlbr(bbox):
     #this composed with itself is an identity mapping
     return np.asarray([bbox[1], bbox[0], bbox[3], bbox[2]]) 
