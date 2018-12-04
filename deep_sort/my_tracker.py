@@ -8,6 +8,7 @@ from . import tools
 from .track import Track
 from .detection import Detection
 from .tools import ltwh_to_tlbr, tlbr_to_ltwh, ltrb_to_tlbr, tlbr_to_ltrb, safe_crop_ltbr
+from .mask import bbox_to_contour
 from .images import Images
 
 from deep_sort.pycocotools import mask as MaskUtil # try to avoid colisions
@@ -59,7 +60,7 @@ class Tracker:
         self.kf = kalman_filter.KalmanFilter()
         self.tracks = []
         self._next_id = 1
-        tracker_names = ["flow-only-tracker", "deep-sort", "flow-tracker", "flow-matcher"];#TODO make some better tracker names
+        tracker_names = ["flow-only-tracker", "deep-sort", "flow-tracker", "flow-matcher", "mask-matcher", "rect-matcher"];#TODO make some better tracker names
         if tracker_type not in tracker_names:
             raise ValueError("The tracker type was {} when it should have been one of: {}".format(tracker_type, tracker_names))
         self.flow_tracker_names = tracker_names[1:]
@@ -72,14 +73,15 @@ class Tracker:
         self.USE_LOW_CONF = True
         #these two flags might actually have to be the same
         self.GT_INITIALIZATIONS = True # this controls whether to initialize on consistent detections or groundtruths
-        #this can't be True if GT_INITIALIZATIONS is False
-        self.JUST_VOT=True # tracking with a VOT rather than tracking by detection
+        #teis can't be True if GT_INITIALIZATIONS is False
+        self.JUST_VOT=False # tracking with a VOT rather than tracking by detection
         if tracker_type == "flow-tracker":
             #if tracker_type == "flow-tracker" or True: TODO determine if this is what I should do instead of the current if
             from . cosine_metric_learning import cosine_inference
             logging.warning("hacked the logic of when to initialize the inference module")
             self.embedder = cosine_inference.CosineInference()
         self.gt_inds = [] # this will keep a list of all gts used to initialize tracks
+        self.metric_dict = {"flow-matcher": self.flow_metric, "mask-matcher" : self.mask_metric, "rect-matcher" : iou_matching.iou_cost}
 
     def predict(self): # this doesn't need to be changed at all
         """Propagate track state distributions one time step forward.
@@ -112,7 +114,6 @@ class Tracker:
         #TODO change this to be (128,)
         return feature
 
-
     def initialize_from_gts(self, gt_inds, gt_boxes, image):
         """ Initializes the tracks from the first appearance of a groundtruth ID
 
@@ -136,17 +137,25 @@ class Tracker:
             if ind in self.gt_inds:
                 continue
             # compute_descriptor(self, image, x1, y1, x2, y2)
-            feature = self.compute_descriptor(image, *tlbr_to_ltrb(ltwh_to_tlbr(ltwh_box)))[0] #TODO update this when I fixe the extractor
+            if self.tracker_type == "flow-tracker" or self.tracker_type == "deep-sort":
+                feature = self.compute_descriptor(image, *tlbr_to_ltrb(ltwh_to_tlbr(ltwh_box)))[0] #TODO update this when I fixe the extractor
+            else:
+                feature = np.zeros((128,))
+                feature[0] == 1.
             assert feature.shape == (128,)
+            self.metric.samples[self._next_id] = [feature]
             confidence = 1 # it's guaranteed to be correct
             det = Detection(ltwh_box, confidence, feature)
             is_gt = True
             self._initiate_track(det, is_gt)
+            # TODO find a way to make tracks confirmed here, as they are dying too quickly 
+            # This feels a bit hacky but I could just set the last track in self.tracks to confirmed
+            self.tracks[-1].set_confirmed() # for some reason this breaks everything when you don't use the --dont-use-low-conf flag
             self.gt_inds.append(ind)
+            #TODO here it needs to be added to self.metric.samples in the form of {id : feature}
 
     def output_features(self, track, image):
         H5_FILE_NAME = "features.h5"
-
 
     def update(self, detections, **kwargs): # this is the root of what needs to be changed
         """Perform measurement update and track management.
@@ -186,16 +195,15 @@ class Tracker:
             # Update track set with the first round of matches
             for track_idx, detection_idx in matches:
                 self.tracks[track_idx].update(
-                    self.kf, detections[detection_idx], self.image)
+                    self.kf, detections[detection_idx], self.image)# this could very well be broken
 
             #TODO this should really be changed to calling the flow_predict method for each track, and be moved later in the program
-       
             if kwargs["use_unmatched"]:
                 #unmatched_tracks is really the indices of the same
                 if self.USE_LOW_CONF:
-                    unmatched_track = self.retry_detections(unmatched_tracks, [detections[i] for i in unmatched_detections], kwargs["bad_detections"], initialize_new_tracks=True)
+                    unmatched_tracks = self.retry_detections(unmatched_tracks, [detections[i] for i in unmatched_detections], kwargs["bad_detections"], initialize_new_tracks=True)
                 else:
-                    unmatched_track = self.retry_detections(unmatched_tracks, [detections[i] for i in unmatched_detections], [], initialize_new_tracks=True)
+                    unmatched_tracks = self.retry_detections(unmatched_tracks, [detections[i] for i in unmatched_detections], [], initialize_new_tracks=True)
             else:
                 if not self.GT_INITIALIZATIONS:
                     for ud in [detections[i] for i in unmatched_detections]:
@@ -389,6 +397,8 @@ class Tracker:
 
         for ud in unmatched_detections_:
             # the detection here isn't really useful
+            # this is really bad, it should use what ever metric is defined elsewhere
+            assert self.tracker_type == "deep-sort", "this needs to be refactored for any other type as it uses the gated_metric"
             matches, new_unmatched_tracks, new_unmatched_detections = \
                         linear_assignment.matching_cascade(
                                 self.gated_metric, self.metric.matching_threshold, self.max_age, 
@@ -418,6 +428,7 @@ class Tracker:
         return confirmed_unmatched_track_inxs_
 
     def gated_metric(self, tracks, dets, track_indices, detection_indices):
+        pdb.set_trace()
         features = np.array([dets[i].feature for i in detection_indices])
         targets = np.array([tracks[i].track_id for i in track_indices])
         cost_matrix = self.metric.distance(features, targets)
@@ -469,28 +480,12 @@ class Tracker:
 
     def _match(self, detections):
         logging.warning("Hacky behavior")
-        if self.tracker_type == "flow-matcher" and False:
+        if self.tracker_type in ["flow-matcher", "rect-matcher", "mask-matcher"]:
+            metric = self.metric_dict[self.tracker_type]
             matches, unmatched_tracks, unmatched_detections = \
                 linear_assignment.min_cost_matching(
-                    self.flow_metric, self.max_iou_distance,
+                    metric, self.max_iou_distance,
                     self.tracks, detections)
-        elif True:
-            # a hack to try matching only with bounding box iou_matching.iou_cost
-            logging.warning("HACK: always computing with bbox IOU")
-            matches, unmatched_tracks, unmatched_detections = \
-                linear_assignment.min_cost_matching(
-                    iou_matching.iou_cost, self.max_iou_distance,
-                    self.tracks, detections)
-            logging.warning("Matches: {}, unmatched_tracks: {}, unmatched_detections: {}".format(matches, unmatched_tracks, unmatched_detections))
-
-        elif self.tracker_type == "mask-matcher" or True:
-            logging.warning("HACK: always entering here")
-            matches, unmatched_tracks, unmatched_detections = \
-                linear_assignment.min_cost_matching(
-                    self.mask_metric, self.max_iou_distance,
-                    self.tracks, detections)
-            logging.warning("Matches: {}, unmatched_tracks: {}, unmatched_detections: {}".format(matches, unmatched_tracks, unmatched_detections))
-
         else:  # use the normal appearance features approach
             # Split track set into confirmed and unconfirmed tracks.
             confirmed_tracks = [

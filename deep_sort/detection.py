@@ -1,5 +1,6 @@
 # vim: expandtab:ts=4:sw=4
 import numpy as np
+from . import mask as maskTools
 
 
 class Detection(object):
@@ -26,11 +27,14 @@ class Detection(object):
 
     """
 
-    def __init__(self, tlwh, confidence, feature, mask):
+    def __init__(self, tlwh, confidence, feature, mask=None):
         self.tlwh = np.asarray(tlwh, dtype=np.float)
         self.confidence = float(confidence)
         self.feature = np.asarray(feature, dtype=np.float32)
-        self.mask = mask
+        if mask is None:
+            self.mask = maskTools.bbox_to_contour(tlwh) # this assumes that no box is provided. It actually suggests that the tlwh should be removed at some point
+        else:
+            self.mask = mask
         self.was_NMS_suppressed = False
     
     def to_tlwh(self):

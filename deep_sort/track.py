@@ -1,5 +1,6 @@
 # vim: expandtab:ts=4:sw=4
 from .tools import ltwh_to_xyah, xyah_to_ltwh, ltwh_to_tlbr
+from . import mask as MaskTools
 import numpy as np
 from scipy import stats
 import logging
@@ -79,8 +80,6 @@ class Track:
             assert image.shape[2] == 3
         self.mean = mean # this is the location if it is a flow track in the format [l,t,r,b]
         self.location = None #ltwh_to_tlbr(xyah_[:4]))
-        assert type(mask) == list
-        self.mask = mask # a null mask
         self.covariance = covariance
         self.track_id = track_id
         self.hits = 1
@@ -103,8 +102,10 @@ class Track:
         self._n_init = n_init
         self._max_age = max_age
         self.use_location = False
+        self.mask = MaskTools.bbox_to_contour(self.to_tlwh())
 
         self.init_tracker(image)
+
 
     def init_tracker(self, image):
         # reset the tracker location with the new image and the current tracker state
@@ -327,6 +328,11 @@ class Track:
             self.state = TrackState.Deleted 
             return True 
         return False # this track was good
+    
+    def set_confirmed(self):
+        """sets the track's status to confirmed
+        """
+        self.state = TrackState.Confirmed
 
     def is_tentative(self):
         """Returns True if this track is tentative (unconfirmed).

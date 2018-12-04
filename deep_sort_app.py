@@ -49,7 +49,6 @@ def gather_sequence_info(sequence_dir, detection_file, track_class=None, detecti
         * image_size: Image size (height, width).
         * min_frame_idx: Index of the first frame.
         * max_frame_idx: Index of the last frame.
-
     """
     print("\n\n\nTHIS IS A HACK, THE DETECTION FILE IS HARDCODED\n\n\n")
     detection_file = "/home/drussel1/data/ADL/new_mask_outputs/dataset_per_frame/P_18.MP4.h5"

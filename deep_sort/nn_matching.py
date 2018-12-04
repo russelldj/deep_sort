@@ -136,7 +136,7 @@ class NearestNeighborDistanceMetric(object):
         self.samples = {}
 
     def partial_fit(self, features, targets, active_targets):
-        """Update the distance metric with new data.
+        """Update the distance metric with new data. [This is such a poorly named method, I'm not sure why they called it this]
 
         Parameters
         ----------
@@ -152,6 +152,8 @@ class NearestNeighborDistanceMetric(object):
             self.samples.setdefault(target, []).append(feature)
             if self.budget is not None:
                 self.samples[target] = self.samples[target][-self.budget:]
+        # this appears to reset the features after it is brifely abscent which you wouldn't seem to want
+        # TODO assess whether this is actually correct, this seems really really bad
         self.samples = {k: self.samples[k] for k in active_targets}
 
     def distance(self, features, targets):
@@ -174,6 +176,7 @@ class NearestNeighborDistanceMetric(object):
         """
         cost_matrix = np.zeros((len(targets), len(features)))
         for i, target in enumerate(targets):
+            assert type(self.samples[target]) == list
             cost_matrix[i, :] = self._metric(self.samples[target], features)
         return cost_matrix
 

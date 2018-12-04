@@ -50,7 +50,7 @@ def parse_args():
     parser.add_argument("--track-subset-file", help="much the same as the visualization script, this file should be the frame IDs you want tracked, one per line of a file", default=None)
     parser.add_argument("--dont-display", help="use the visualization", action="store_true", default=False)
     parser.add_argument("--dont-use-unmatched", help="don't use unmatched, low-confidence, and NMS-suppressed detections", action="store_false", default=True) # This is really use-unmatched
-    parser.add_argument("--tracker-type", help="which tracker to use, currently 'deep-sort', 'flow-matcher', 'flow-tracker'", type=str, default="deep-sort")
+    parser.add_argument("--tracker-type", help="which tracker to use, currently 'deep-sort', 'flow-matcher', 'mask-matcher', 'rect-matcher', 'flow-tracker'", type=str, default="deep-sort")
     parser.add_argument("--vis-method", help="pick how to visualize the resultant tracks: `show-all`, `one-track`, `one-gt'", type=str, default="one-track")
     parser.add_argument("--flow-dir", help="Where the flows are located", type=str, default="--flow dir should have been set")
     parser.add_argument("--update-kf", help="update the kalman filter to keep the probablilty mass small", action="store_true", default=False)
