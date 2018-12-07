@@ -1,6 +1,7 @@
 # vim: expandtab:ts=4:sw=4
 from __future__ import absolute_import
 import numpy as np
+import pdb
 from sklearn.utils.linear_assignment_ import linear_assignment
 from . import kalman_filter
 
@@ -53,6 +54,7 @@ def min_cost_matching(
         return [], track_indices, detection_indices  # Nothing to match.
     cost_matrix = distance_metric(
         tracks, detections, track_indices, detection_indices)
+    print("cost matrix is {}".format(cost_matrix))
     if sum(sum(np.isnan(cost_matrix))) != 0:
         print("cost matrix is {}".format(cost_matrix))
         pbd.set_trace()

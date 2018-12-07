@@ -71,17 +71,19 @@ class Tracker:
         self.OCCLUDER_STACK = False # use my initial hacky occluder thing
         self.USE_MODE = False
         self.USE_LOW_CONF = True
+        self.USE_MOSSE = True
         #these two flags might actually have to be the same
         self.GT_INITIALIZATIONS = True # this controls whether to initialize on consistent detections or groundtruths
         #teis can't be True if GT_INITIALIZATIONS is False
         self.JUST_VOT=False # tracking with a VOT rather than tracking by detection
-        if tracker_type == "flow-tracker":
+        assert self.JUST_VOT == False 
+        if tracker_type in ["flow-tracker", "deep-sort"]:
             #if tracker_type == "flow-tracker" or True: TODO determine if this is what I should do instead of the current if
             from . cosine_metric_learning import cosine_inference
             logging.warning("hacked the logic of when to initialize the inference module")
             self.embedder = cosine_inference.CosineInference()
         self.gt_inds = [] # this will keep a list of all gts used to initialize tracks
-        self.metric_dict = {"flow-matcher": self.flow_metric, "mask-matcher" : self.mask_metric, "rect-matcher" : iou_matching.iou_cost}
+        self.metric_dict = {"flow-matcher": self.flow_metric, "mask-matcher" : self.mask_metric, "rect-matcher" : iou_matching.iou_cost, "flow-tracker" : self.gated_metric}
 
     def predict(self): # this doesn't need to be changed at all
         """Propagate track state distributions one time step forward.
@@ -93,7 +95,8 @@ class Tracker:
             for track in self.tracks:
                 track.flow_predict(self.flow)
             #this isn't quite right because there are two flavors of the flow algorithm, the one where flow is used for prediction and the other where it is just for matching
-        elif self.tracker_type in ["deep-sort", "flow-tracker", "mask-matcher"]: 
+        elif self.tracker_type in ["deep-sort", "flow-tracker", "mask-matcher", "rect-matcher"]: 
+            #TODO verify that adding `rect-matcher` to the list was correct
             for track in self.tracks:
                 track.predict(self.kf)
         else:
@@ -181,6 +184,7 @@ class Tracker:
 
         #Do the matching either with flow or appearance
         if self.JUST_VOT:
+            logging.warning("JUST VOT")
             for track in self.tracks:
                 self.image_VOT(track,self.image)
             # get the deleted tracks
@@ -214,9 +218,11 @@ class Tracker:
                 #assert not self.tracks[unmatched_track].is_tentative()
                 if self.tracker_type == "flow-tracker" and self.tracks[unmatched_track].is_confirmed(): 
                     # move the track based on the flow
-                    #self.flow_VOT(self.tracks[unmatched_track], self.image)
-                    logging.warning("NO LONGER DOING FLOW UPDATES BUT RATHER TRACKER ONES")
-                    self.image_VOT(self.tracks[unmatched_track], self.image)
+                    if self.USE_MOSSE:
+                        self.image_VOT(self.tracks[unmatched_track], self.image)
+                        logging.warning("NO LONGER DOING FLOW UPDATES BUT RATHER TRACKER ONES")
+                    else:
+                        self.flow_VOT(self.tracks[unmatched_track], self.image)
 
                 # this ordering is important, you don't want to mark missed first
                 self.tracks[unmatched_track].mark_missed() # this just handles deletions
@@ -398,10 +404,10 @@ class Tracker:
         for ud in unmatched_detections_:
             # the detection here isn't really useful
             # this is really bad, it should use what ever metric is defined elsewhere
-            assert self.tracker_type == "deep-sort", "this needs to be refactored for any other type as it uses the gated_metric"
+            metric = self.metric_dict[self.tracker_type]
             matches, new_unmatched_tracks, new_unmatched_detections = \
                         linear_assignment.matching_cascade(
-                                self.gated_metric, self.metric.matching_threshold, self.max_age, 
+                                metric, self.metric.matching_threshold, self.max_age, 
                                 confirmed_unmatched_tracks_, [ud]) # this can't be easily cached as unmatched tracks keeps getting shorter
             assert len(matches) <= 1, "there is only one detection, so there shouldn't be more than one match"
             if len(matches) == 1:
@@ -428,7 +434,6 @@ class Tracker:
         return confirmed_unmatched_track_inxs_
 
     def gated_metric(self, tracks, dets, track_indices, detection_indices):
-        pdb.set_trace()
         features = np.array([dets[i].feature for i in detection_indices])
         targets = np.array([tracks[i].track_id for i in track_indices])
         cost_matrix = self.metric.distance(features, targets)
@@ -479,14 +484,13 @@ class Tracker:
 
 
     def _match(self, detections):
-        logging.warning("Hacky behavior")
-        if self.tracker_type in ["flow-matcher", "rect-matcher", "mask-matcher"]:
+        if self.tracker_type in ["flow-matcher", "rect-matcher", "mask-matcher", "flow-tracker"]:
             metric = self.metric_dict[self.tracker_type]
             matches, unmatched_tracks, unmatched_detections = \
                 linear_assignment.min_cost_matching(
                     metric, self.max_iou_distance,
                     self.tracks, detections)
-        else:  # use the normal appearance features approach
+        elif self.tracker_type in ["deep-sort"]:  # use the normal appearance features approach
             # Split track set into confirmed and unconfirmed tracks.
             confirmed_tracks = [
                 i for i, t in enumerate(self.tracks) if t.is_confirmed()]
@@ -513,6 +517,8 @@ class Tracker:
 
             matches = matches_a + matches_b
             unmatched_tracks = list(set(unmatched_tracks_a + unmatched_tracks_b))
+        else: 
+            raise ValueError("self.tracker_type was {} when it should have been one of the acceptable ones".format(self.tracker_type))
         return matches, unmatched_tracks, unmatched_detections
 
     def _initiate_track(self, detection, is_gt=False):
