@@ -1,3 +1,6 @@
 [submodule "lib/cosine_metric_learning"]
 	path = lib/cosine_metric_learning
 	url = git@github.com:russelldj/cosine_metric_learning.git
+[submodule "deep_sort/DaSiamRPN"]
+	path = deep_sort/DaSiamRPN
+	url = https://github.com/foolwood/DaSiamRPN.git

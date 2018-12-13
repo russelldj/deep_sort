@@ -398,7 +398,7 @@ def run(sequence_dir, detection_file, output_file, min_confidence,
             if seq_info['groundtruth'] is not None:
                 vis.draw_groundtruth(*create_groundtruth(seq_info['groundtruth'], frame_idx))
             #HACK for showing detections
-            vis.draw_detections(hc_nms_positive_detections)
+            #vis.draw_detections(hc_nms_positive_detections)
             vis.draw_trackers(tracker.tracks, create_groundtruth(seq_info['groundtruth'], frame_idx)) # clean up the double use of create_groundtruht
 
         # Store results.

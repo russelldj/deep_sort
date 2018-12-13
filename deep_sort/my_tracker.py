@@ -66,6 +66,7 @@ class Tracker:
         self.flow_tracker_names = tracker_names[1:]
         self.tracker_type = tracker_type
         self.flow_dir = flow_dir
+        #perhaps consider loading some representation of what the hyperparameters are
         self.flow = None
         # TODO, test the effects of this
         self.OCCLUDER_STACK = False # use my initial hacky occluder thing
@@ -76,7 +77,6 @@ class Tracker:
         self.GT_INITIALIZATIONS = True # this controls whether to initialize on consistent detections or groundtruths
         #teis can't be True if GT_INITIALIZATIONS is False
         self.JUST_VOT=False # tracking with a VOT rather than tracking by detection
-        assert self.JUST_VOT == False 
         if tracker_type in ["flow-tracker", "deep-sort"]:
             #if tracker_type == "flow-tracker" or True: TODO determine if this is what I should do instead of the current if
             from . cosine_metric_learning import cosine_inference
@@ -285,6 +285,7 @@ class Tracker:
                 import pdb; pdb.set_trace()
 
             if feature is None: # this means there was an error_ like a zero box
+                assert len(self.image.shape) == 3
                 track.flow_update(self.kf, tlbr_to_ltwh(tlbr_bbox), self.image, feature=None, update_kf=False, update_hit=False) # this is an issue, i probably need to write another method, because it doesn't make sense to c
             else:
                 #dist_to_track_features = self.metric.distance_from_track_to_gallery(feature, track.track_id)
@@ -295,7 +296,7 @@ class Tracker:
                 logging.warning("HACKED so it always matches the gallery")
                 matched_gallery = True#self.metric.feature_within_max_distance(feature, track.track_id)
 
-                track.flow_update(self.kf, tlbr_to_ltwh(tlbr_bbox), feature, update_kf=matched_gallery, update_hit=matched_gallery) # this is an issue, i probably need to write another method, because it doesn't 
+                track.flow_update(self.kf, tlbr_to_ltwh(tlbr_bbox), self.image, feature, update_kf=matched_gallery, update_hit=matched_gallery) # this is an issue, i probably need to write another method, because it doesn't 
         else:
             track.mark_missed()
             print("tracking failed") 

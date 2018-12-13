@@ -1,6 +1,7 @@
 # vim: expandtab:ts=4:sw=4
 from .tools import ltwh_to_xyah, xyah_to_ltwh, ltwh_to_tlbr
 from . import mask as MaskTools
+from .DaSiamRPN.code.SiamRPN_tracker import SiamRPN_tracker
 import numpy as np
 from scipy import stats
 import logging
@@ -92,10 +93,10 @@ class Track:
         if feature is not None:
             self.features.append(feature)
 
-        # TODO have a method which returns if the track is being moved by the tracker
         self.tracker = cv2.TrackerMOSSE_create()
-        #TODO determine whether it will have to be inteligently reinitialized or if simply updating it
-        # you could hack it so the update is done with the image chip
+
+        # TODO have a method which returns if the track is being moved by the tracker
+        #TODO this needs to be replaced with initializing the DaSiam tracker
 
         self.occluded_stack = []
 
@@ -103,12 +104,14 @@ class Track:
         self._max_age = max_age
         self.use_location = False
         self.mask = MaskTools.bbox_to_contour(self.to_tlwh())
-
         self.init_tracker(image)
-
 
     def init_tracker(self, image):
         # reset the tracker location with the new image and the current tracker state
+        #TODO also the tracker initialization
+        #TODO determine why this is getting initialize with feature some times
+        assert len(image.shape) == 3
+        self.Siam_tracker = SiamRPN_tracker(image, tuple(self.to_tlwh().tolist()))
         self.tracker.init(image, tuple(self.to_tlwh().tolist()))
    
     def tracker_update(self, image):
@@ -118,7 +121,12 @@ class Track:
             print("ok")
 
     def tracker_predict(self, image):
-        ok, bbox = self.tracker.update(image)
+        #split this into two parts, the updating and the grabbing of the information
+        score, bbox = self.Siam_tracker.predict(image)
+        ok = score > 0.8 #HACK this is just a temporary thing to see what happens if you keep tracking
+
+        #the results from the earlier results will be overwritten
+        #ok, bbox = self.tracker.update(image)
         return ok, ltwh_to_tlbr(bbox)
 
     def to_tlwh(self):
@@ -180,7 +188,6 @@ class Track:
         y_size = fint(bbox[3]) - fint(bbox[1])
 
 
-        print(tracked_region.shape)
         USE_MODE = False
 
         if USE_MODE:
@@ -261,6 +268,7 @@ class Track:
         ## I.E. just call the normal update function
         # else, perform a direct location update and 
         #TODO add the feature if we care about it
+        assert len(image.shape) == 3 
 
         #assert self.is_flow_track, "This isn't set so there will be an issue with to_ltwh"
         logging.warning("doing a flow update")
@@ -284,7 +292,6 @@ class Track:
             self.use_location = True
 
         assert image is not None
-        self.init_tracker(image)
 
     def update(self, kf, detection, image):
         """Perform Kalman filter measurement update step and update the feature

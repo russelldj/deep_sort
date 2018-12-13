@@ -253,14 +253,14 @@ elif len(sys.argv) > 1:
 else:
     flow_tracker = FlowTracker(VIDEO_FILE, FLOW_DIR)
 
-flow_tracker.standard_tracking()
-#
-#flow_tracker.pick_location()
-##flow_tracker.set_location_ltrb([594, 336, 676, 508])
-#while True:
-#    flow_tracker.load_next()
-#    flow_tracker.predict()
-#    #flow_tracker.show_track()
-#    flow_tracker.add_track()
-#    #flow_tracker.show_flow()
-#    flow_tracker.show_hist_and_image()
+#flow_tracker.standard_tracking()
+
+flow_tracker.pick_location()
+#flow_tracker.set_location_ltrb([594, 336, 676, 508])
+while True:
+    flow_tracker.load_next()
+    flow_tracker.predict()
+    #flow_tracker.show_track()
+    flow_tracker.add_track()
+    #flow_tracker.show_flow()
+    flow_tracker.show_hist_and_image()
